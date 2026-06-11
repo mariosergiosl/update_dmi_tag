@@ -1,0 +1,8 @@
+# Dependencias de desenvolvimento para o projeto amibios_dmi
+# Nota: O modulo "patrimonial" corporativo e fornecido pelo pacote RPM 
+# python3-patrimonial do sistema operacional, e nao pelo PyPI.
+
+# Para testes locais e analise estatica:
+flake8>=6.0.0
+black>=23.0.0
+pytest>=7.0.0

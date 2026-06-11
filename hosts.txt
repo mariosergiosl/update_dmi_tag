@@ -1,0 +1,8 @@
+# remover estas linhas de explicação
+# formato desse arquivo
+# [apenas ip]
+# [ip],[numero do bem a ser atualizado]
+# exemplo:
+123.123.123.123
+123.123.123.123,12345678912345
+

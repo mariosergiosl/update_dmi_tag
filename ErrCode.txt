@@ -1,0 +1,24 @@
+Error Code List for AMI Aptio 5.x DMIEDIT
+
+==============================================================================
+ErrCode		Description 
+------------------------------------------------------------------------------
+0x00	 - 	Success.
+0x01	 - 	Error: Unknown command.
+0x0E	 - 	Error: Kernel source files cannot be found.
+0x10	 - 	Error: Unable to load driver.
+0x20	 - 	Error: Unable to initialize memory manager.
+0x22	 - 	Error: Problem allocating memory.
+0x24	 - 	Error: Problem allocating BIOS buffer.
+0x30	 - 	Error: Problem opening file for reading.
+0x31	 - 	Error: Problem reading file.
+0x32	 - 	Error: Problem opening file to write.
+0x33	 - 	Error: Problem writting file.
+0x49	 - 	Error: A platform condition has prevented.
+0x61	 - 	Error: Program already running.
+0x98	 - 	Error: Invalid SMI.
+0xE0	 - 	Error: Fail to initialize SMBIOS.
+0xE1	 - 	Error: DMI Data read failed.
+0xE2	 - 	Error: DMI Data write failed.
+0xE3	 - 	Error: System doesn't support.
+0xE4	 - 	Error: System doesn't support to write a null field.
