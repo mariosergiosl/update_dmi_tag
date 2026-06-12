@@ -1,8 +1,8 @@
-# Manual de Operacao Completo -- update_dmi_tag.py v2.0.2
+# Manual de Operacao Completo -- update_dmi_tag.py v2.0.3
 
 **Autor:** Mario Luz (mario.luz@suse.com)
-**Versao do documento:** 2.0.2
-**Data:** 2026-06-11
+**Versao do documento:** 2.0.3
+**Data:** 2026-06-12
 **Projeto:** Atualizacao Automatizada de DMI Asset Tag -- Frota de Equipamentos
 
 ---
@@ -17,7 +17,7 @@ DMI do firmware BIOS, impossibilitando auditoria de hardware independente do sis
 operacional. A gravacao manual equipamento a equipamento era inviavel na escala do
 parque de equipamentos.
 
-A solucao entregue e o script `update_dmi_tag.py` v2.0.2, que opera em dois modos:
+A solucao entregue e o script `update_dmi_tag.py` v2.0.3, que opera em dois modos:
 
 - **Modo remoto**: o operador executa o script na sua maquina Linux e o script conecta
   via SSH em uma lista de hosts, realiza auditoria completa de ambiente, valida o numero
@@ -63,6 +63,7 @@ fabricante da plataforma de hardware para uso operacional.
 | 2.0.0 | 2026-06-05 | Reescrita completa: cascata amidelnx_64 + amibios_dmi, modo remoto SSH, log duplo, tabela de resumo |
 | 2.0.1 | 2026-06-10 | Bootstrap SSH automatico (gera chave local, distribui via ssh-copy-id sob demanda; `--ssh-pass`, `SSH_PASS` env, `--ssh-pass-file`) |
 | 2.0.2 | 2026-06-11 | Fix em `garante_amidelnx_remoto` (deteccao do binario remoto); `scp` agora reporta stderr em falhas; guarda do `resultado_escrita` antes de executar `reinstall-enable` e `reboot` em modo `--production` |
+| 2.0.3 | 2026-06-12 | `le_arquivo_hosts` passou a ignorar linhas iniciadas com `#` e comentarios em fim de linha; log local consolidado deixou de ser truncado a cada execucao (modo append com separador entre rodadas) |
 
 ---
 
@@ -177,19 +178,26 @@ e servem a propositos diferentes.
 
 ### 4.1 Formato
 
+A partir da v2.0.3 sao aceitos comentarios iniciados com `#`, tanto em linha
+inteira quanto em fim de linha. Linhas em branco continuam ignoradas.
+
 ```
-# comentario (linha ignorada)
+# comentario inteiro (linha ignorada)
 IP
 IP,BEM_NUMERO
+IP # comentario trailing apos o IP
+IP,BEM_NUMERO # comentario trailing apos o BEM
 ```
 
 **Exemplos:**
 ```
-# Equipamento sem BEM na lista -- usa valor do arquivo de configuracao local
+# Equipamentos sem BEM na lista -- usa valor do arquivo de configuracao local
 192.168.1.10
+192.168.1.20 # equip-recepcao
 
-# Equipamento com BEM fornecido explicitamente na lista
+# Equipamentos com BEM fornecido explicitamente na lista
 192.168.1.11,9905260010001
+192.168.1.21,9905260010002 # equip-financeiro
 ```
 
 ### 4.2 Regra de precedencia do BEM_NUMERO
@@ -406,6 +414,10 @@ python3 ~/asset_tag_bios/update_dmi_tag.py \
 - **Arquivo:** `update_dmi_tag_remoto.log` (configuravel via `--log-local`)
 - **Local:** maquina do operador, no diretorio de trabalho
 - **Conteudo:** historico de todos os hosts, prefixo `[IP]` em cada linha
+- **Persistencia:** a partir da v2.0.3, o arquivo e aberto em modo append e
+  **nunca e truncado**. Cada execucao acrescenta um bloco novo separado por
+  linha em branco do anterior. Se voce quiser arquivar uma rodada antes da
+  proxima, mova o arquivo manualmente.
 
 Filtrar por host especifico:
 ```bash
@@ -425,7 +437,7 @@ grep "192.168.1.11" update_dmi_tag_remoto.log
 ### 8.4 Exemplo de saida verbose (dry-run)
 
 ```
-2026-06-11 10:29:16 - INFO - update_dmi_tag.py v2.0.2 -- MODO REMOTO
+2026-06-12 10:29:16 - INFO - update_dmi_tag.py v2.0.3 -- MODO REMOTO
 2026-06-11 10:29:16 - INFO - Modo  : DRY-RUN (simulacao)
 2026-06-11 10:29:36 - [192.168.1.10] - INFO - Hostname   : equip-exemplo-01
 2026-06-11 10:29:37 - [192.168.1.10] - INFO - Placa-Mae  : PERTO SA H310M M.2
@@ -555,19 +567,20 @@ usando o `EFI_SMBIOS_PROTOCOL` nativo para escrever o asset tag em pre-boot.
 
 ## 12. Compatibilidade por Modelo de Placa-Mae
 
-Resultados de testes reais em equipamentos do parque (junho de 2026):
+Resultados de testes reais em equipamentos do parque (atualizado em 2026-06-12):
 
-| Modelo | BIOS | SMBIOS | WSMT | amidelnx_64 | amibios_dmi | Resultado |
+| Modelo | BIOS | SMBIOS | WSMT | amidelnx_64 | amibios_dmi | Status |
 |---|---|---|---|---|---|---|
-| Gigabyte GA-H110TN-M | AMI Aptio V | 3.0.0 | Ausente | OK | OK | **Compativel** |
-| PERTO SA H310M M.2 | AMI Aptio V | 3.1.1 | Presente | OK | SMI 0x84 | **Compativel** |
-| ASUS PRIME H610M-E D4 | AMI Aptio V | 3.4.0 | Presente | OK | SMI 0x84 | **Compativel** |
-| Daten DH4UP | AMI Aptio V | -- | Presente | OK | SMI 0x84 | **Compativel** |
-| Daten DH3UP | AMI Aptio V | 3.1.1 | Presente | Erro 24 | SMI 0x84 | **Nao compativel** |
+| Gigabyte GA-H110TN-M | AMI Aptio V | 3.0.0 | Ausente | OK | OK | **Funciona** |
+| PERTO SA H310M M.2 | AMI Aptio V | 3.1.1 | Presente | OK | SMI 0x84 | **Funciona** |
+| ASUS PRIME H610M-E D4 | AMI Aptio V | 3.4.0 | Presente | OK | SMI 0x84 | **Funciona** |
+| Daten DH4UP | AMI Aptio V | --- | Presente | OK | SMI 0x84 | **Funciona** |
+| Daten DH3UP | AMI Aptio V | 3.1.1 | Presente | Erro 24 | SMI 0x84 | **Nao funciona** |
+| Daten H4U02PER | AMI Aptio V | 3.2.0 | Presente | Erro 24 | erro escrita | **Nao funciona** |
 
-**Resumo:** o `amidelnx_64` resolve todos os modelos exceto o Daten DH3UP. O
-`amibios_dmi` funciona somente na Gigabyte H110TN-M (sem WSMT). A cascata do script
-cobre automaticamente todos os casos compativeis.
+**Resumo:**
+- **4 modelos funcionam** (Gigabyte GA-H110TN-M, PERTO SA H310M M.2, ASUS PRIME H610M-E D4, Daten DH4UP), todos pela cascata automatica do script. O `amidelnx_64` resolve todos os casos, o `amibios_dmi` funciona apenas na Gigabyte (unico modelo sem WSMT).
+- **2 modelos nao funcionam** (Daten DH3UP e Daten H4U02PER). Ambos apresentam `Error 24: Problem allocating BIOS buffer` no `amidelnx_64` e falha de escrita no `amibios_dmi`. Causa raiz unica: combinacao WSMT + `CONFIG_STRICT_DEVMEM=y` + kernel lockdown em modo `integrity` (Secure Boot ativo) impede a alocacao de buffer fisico necessario ao handler SMI. Sem solucao via SO; em avaliacao via `AMIDEEFIx64.EFI` por UEFI Shell pre-boot (detalhes na secao 11.4).
 
 ---
 
@@ -625,6 +638,6 @@ Os dois devem retornar o mesmo valor de 14 digitos.
 
 | Arquivo | Versao atual |
 |---|---|
-| `update_dmi_tag.py` | 2.0.2 (2026-06-11) |
+| `update_dmi_tag.py` | 2.0.3 (2026-06-12) |
 | `survey_asset_tag.bash` | 1.3.0 (script de auditoria de parque) |
-| `manual_operacao.md` | Este documento (2026-06-11) |
+| `manual_operacao.md` | Este documento (2026-06-12) |
