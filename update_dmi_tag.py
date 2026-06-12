@@ -31,7 +31,7 @@
 #
 # AUTHOR: Mario Luz
 #
-# VERSION: 2.0.2
+# VERSION: 2.0.3
 #
 # CREATED: 2026-05-29
 # REVISION: 2026-06-01 - Auditoria de versoes (RPM, modulo, script), distincao
@@ -62,6 +62,48 @@
 #                            da tag retornou OK. Antes, executavam mesmo
 #                            apos FALHOU-todos, podendo reiniciar hosts
 #                            sem que a tag tivesse sido atualizada.
+#           2026-06-12 - v2.0.3: dois fixes operacionais:
+#                        (1) le_arquivo_hosts passou a ignorar linhas
+#                            iniciando com '#' (comentarios inteiros) e
+#                            tambem comentarios em fim de linha
+#                            ("192.168.1.10 # equip-01"). Antes, linhas
+#                            de comentario do arquivo de hosts eram
+#                            tratadas como IPs invalidos e apareciam
+#                            como INACESSIVEL na tabela de resumo.
+#                        (2) Log local consolidado (--log-local) deixou
+#                            de ser truncado a cada execucao. Agora abre
+#                            em modo append, preservando o historico de
+#                            todas as rodadas em um unico arquivo. Cada
+#                            nova execucao e separada por linha em
+#                            branco do bloco anterior.
+#
+# =======================================================================
+#
+# COMPATIBILITY:
+#
+# Modelos de placa-mae testados ate a data desta versao:
+#
+# +-------------------------+-------------+--------+----------+--------+
+# | Modelo                  | BIOS        | SMBIOS | WSMT     | Status |
+# +-------------------------+-------------+--------+----------+--------+
+# | Gigabyte GA-H110TN-M    | AMI Aptio V | 3.0.0  | Ausente  | OK     |
+# | PERTO SA H310M M.2      | AMI Aptio V | 3.1.1  | Presente | OK     |
+# | ASUS PRIME H610M-E D4   | AMI Aptio V | 3.4.0  | Presente | OK     |
+# | Daten DH4UP             | AMI Aptio V | ---    | Presente | OK     |
+# | Daten DH3UP             | AMI Aptio V | 3.1.1  | Presente | FALHA  |
+# | Daten H4U02PER          | AMI Aptio V | 3.2.0  | Presente | FALHA  |
+# +-------------------------+-------------+--------+----------+--------+
+#
+# Modelos com Status OK gravam com sucesso via amidelnx_64 (Mecanismo 1).
+# O amibios_dmi (Mecanismo 2) so funciona na Gigabyte GA-H110TN-M (unica
+# sem WSMT). Nos demais, falha com SMI error 0x84 (handler bloqueado
+# pela WSMT) e o script usa automaticamente o Mecanismo 1.
+#
+# Modelos Daten DH3UP e H4U02PER apresentam Error 24 ("Problem allocating
+# BIOS buffer") no amidelnx_64. Causa raiz: WSMT + CONFIG_STRICT_DEVMEM +
+# kernel lockdown integrity (Secure Boot ativo) bloqueiam alocacao de
+# buffer fisico necessaria para o handler SMI. Sem solucao no script
+# atual; em avaliacao via AMIDEEFIx64.EFI por UEFI Shell pre-boot.
 #
 # =======================================================================
 
@@ -116,7 +158,7 @@ class TodosMecanismosFalharam(Exception):
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
 
-SCRIPT_VERSION = "2.0.2"
+SCRIPT_VERSION = "2.0.3"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -2206,12 +2248,15 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
 def le_arquivo_hosts(caminho_hosts):
     """
     NAME: le_arquivo_hosts
-    DESCRIPTION: Le o arquivo de lista de hosts no formato simples sem
-                 suporte a comentarios. Cada linha pode ter:
+    DESCRIPTION: Le o arquivo de lista de hosts. Cada linha pode ter:
                    IP
                    IP,BEM_NUMERO
-                 Linhas vazias sao ignoradas. Retorna lista de tuplas
-                 (ip, bem_numero_ou_vazio).
+                 Sao ignoradas:
+                   - linhas vazias (apenas espacos)
+                   - linhas inteiras de comentario (iniciadas com '#')
+                   - comentarios em fim de linha
+                     (ex: "192.168.1.10 # equip-01" -> processa apenas o IP)
+                 Retorna lista de tuplas (ip, bem_numero_ou_vazio).
     PARAMETER: caminho_hosts - caminho do arquivo de hosts
     RETURNS: list of tuple(str, str) -- [(ip, bem_numero), ...]
     """
@@ -2223,7 +2268,13 @@ def le_arquivo_hosts(caminho_hosts):
     hosts = []
     with open(caminho_hosts, "r", encoding="utf-8", errors="ignore") as f:
         for linha in f:
+            # Remove comentario trailing antes de qualquer outro tratamento.
+            # Ex: "192.168.1.10  # equip de teste" -> "192.168.1.10  "
+            if "#" in linha:
+                linha = linha.split("#", 1)[0]
             linha = linha.strip()
+            # Pula vazias (originais ou que viraram vazias apos remover comentario).
+            # Isso tambem cobre linhas que comecam com '#' (apos split, ficam vazias).
             if not linha:
                 continue
             partes = linha.split(",", 1)
@@ -2781,13 +2832,18 @@ def main():
         # Modo remoto: nao requer root local. O sudo e tratado remotamente
         # por detecta_sudo() em cada host alvo.
 
-        # Inicializa log local consolidado
+        # Abre o log local consolidado em modo APPEND para preservar
+        # historico de todas as execucoes (antes era aberto em "w" e
+        # truncava o arquivo a cada rodada, descartando o historico).
+        # Se o arquivo nao existir ainda, e criado. Se ja existir, a
+        # linha em branco abaixo serve como separador visual entre o
+        # bloco anterior e o cabecalho que sera escrito a seguir.
         try:
-            with open(args.log_local, "w", encoding="utf-8") as f:
-                f.write("")
+            with open(args.log_local, "a", encoding="utf-8") as f:
+                f.write("\n")
         except Exception as e:
             sys.stderr.write(
-                "Aviso: nao foi possivel criar log local {}: {}\n".format(
+                "Aviso: nao foi possivel abrir log local {} para append: {}\n".format(
                     args.log_local, e))
 
         def _log_local(nivel, msg):
