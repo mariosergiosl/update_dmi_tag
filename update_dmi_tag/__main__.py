@@ -27,12 +27,17 @@
 # NOTES: Codificacao US-ASCII nos comentarios e codigo-fonte.
 #        Acentos apenas em documentos externos (.md, .docx).
 #
-# AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
 #
-# VERSION: 2.1.2
+# VERSION: 2.1.4
 #
 # CREATED: 2026-05-29
+# REVISION: 2026-06-15 - v2.1.4 - adiciona argumento --test-write para
+#                        validacao de capacidade de gravacao via rewrite
+#                        no-op (cascata amidelnx_64 -> amibios_dmi com
+#                        o valor atual da BIOS). Resultado exibido na
+#                        coluna Teste Escrita da tabela de resumo.
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py
 #                        (arquivo unico) na modularizacao em pacote.
 #                        Logica de main() e checa_superusuario()
@@ -254,6 +259,20 @@ def main():
         "--production",
         action="store_true",
         help="Executa acoes finais apos gravacao: reinstall-enable e reboot.",
+    )
+    parser.add_argument(
+        "--test-write",
+        action="store_true",
+        default=False,
+        dest="test_write",
+        help=(
+            "Valida a capacidade de gravacao do modelo sem alterar dados. "
+            "Executa um rewrite no-op (regrava o valor atual da BIOS) via "
+            "cascata amidelnx_64 -> amibios_dmi. Pode ser combinado com "
+            "DRY-RUN (sem --write) ou com --write. O resultado aparece na "
+            "coluna 'Teste Escrita' da tabela de resumo. Hosts com tag "
+            "virgem (Default String) ou DESCONHECIDA tem o teste pulado."
+        ),
     )
     parser.add_argument(
         "--version",

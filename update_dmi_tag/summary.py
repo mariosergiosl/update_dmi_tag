@@ -13,21 +13,20 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.3
+# VERSION: 2.1.4
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 # REVISION: 2026-06-15 - v2.1.1 - adiciona coluna MAC.
 # REVISION: 2026-06-15 - v2.1.2 - remove coluna Backup; BBconfig exibe
 #                        DRY-RUN; corrige coluna fantasma no sumario.
-# REVISION: 2026-06-15 - v2.1.3 - tabela detalhada separada em colunas
-#                        Fabricante (board_vendor) e Modelo (board_name)
-#                        no lugar da coluna Placa concatenada; adiciona
-#                        colunas Fab.BIOS (bios_vendor normalizado) e
-#                        Versao BIOS (bios_version); adiciona funcao
-#                        _normaliza_bios_vendor para abreviar fabricantes
-#                        BIOS conhecidos mantendo valores desconhecidos
-#                        intactos.
+# REVISION: 2026-06-15 - v2.1.3 - colunas Fabricante, Modelo, Fab.BIOS
+#                        e Versao BIOS separadas.
+# REVISION: 2026-06-15 - v2.1.4 - adiciona coluna Teste Escrita entre
+#                        Resultado e BBconfig, exibindo o resultado do
+#                        rewrite no-op quando --test-write esta ativo
+#                        (OK-amidelnx, OK-amibios, FALHOU-todos,
+#                        TAG-VIRGEM, TAG-DESCONH ou N/A).
 #
 # =======================================================================
 
@@ -183,27 +182,28 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # 1. TABELA DETALHADA
     # =====================================================================
     C = {
-        "ip":           15,
-        "hostname":     13,
-        "board_vendor": 10,
-        "board_name":   20,
-        "bios_vendor":   8,
-        "bios_version": 14,
-        "smbios":        7,
-        "wsmt":          7,
-        "tag_antes":    15,
-        "bem_conf":     14,
-        "bem_usado":    14,
-        "tag_depois":   15,
-        "resultado":    13,
-        "bbconfig_sync":17,
-        "mac":          52,
+        "ip":             15,
+        "hostname":       13,
+        "board_vendor":   10,
+        "board_name":     20,
+        "bios_vendor":     8,
+        "bios_version":   14,
+        "smbios":          7,
+        "wsmt":            7,
+        "tag_antes":      15,
+        "bem_conf":       14,
+        "bem_usado":      14,
+        "tag_depois":     15,
+        "resultado":      13,
+        "teste_escrita":  13,
+        "bbconfig_sync":  17,
+        "mac":            52,
     }
     CABECALHOS = [
         "IP", "Hostname", "Fabricante", "Modelo",
         "Fab.BIOS", "Versao BIOS", "SMBIOS", "WSMT",
         "Tag Antes", "BEM conf", "BEM usado", "Tag Depois",
-        "Resultado", "BBconfig", "MAC",
+        "Resultado", "Teste Escrita", "BBconfig", "MAC",
     ]
 
     div = "+-" + "-+-".join("-" * (v + 2) for v in C.values()) + "-+"
