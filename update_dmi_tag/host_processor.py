@@ -15,17 +15,18 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.3
+# VERSION: 2.1.4
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 # REVISION: 2026-06-15 - v2.1.1 - adiciona campo mac ao registro.
 # REVISION: 2026-06-15 - v2.1.3 - registro separado em board_vendor,
-#                        board_name, bios_vendor e bios_version (antes
-#                        concatenados em "board" e "bios"). Permite
-#                        exibir Fabricante e Modelo da placa e da BIOS
-#                        em colunas independentes na tabela de resumo,
-#                        eliminando o truncamento que perdia informacao.
+#                        board_name, bios_vendor e bios_version.
+# REVISION: 2026-06-15 - v2.1.4 - adiciona campo teste_escrita ao
+#                        registro (default N/A); chamada condicional a
+#                        tenta_teste_escrita_remoto quando --test-write
+#                        ativo, entre a leitura pos-escrita e a
+#                        sincronizacao do BBconfig.conf.
 #
 # =======================================================================
 
@@ -37,7 +38,7 @@ from .bbconfig import le_valor_configuracao_remoto, sincroniza_bbconfig_remoto
 from .patrimonio import (
     calcula_dv_modulo11, valida_e_calcula_tag, valida_via_patrimonial_cli,
 )
-from .write_cascade import tenta_escrever_tag_remoto
+from .write_cascade import tenta_escrever_tag_remoto, tenta_teste_escrita_remoto
 
 
 def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
@@ -84,6 +85,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         "bbconfig_sync":   "N/A",
         "bbconfig_backup": "",
         "mac":             "N/D",
+        "teste_escrita":   "N/A",
     }
 
     def _log(nivel, msg, sudo_cmd=""):
@@ -255,6 +257,25 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         registro["tag_depois"] = tag_depois.strip() or "N/D"
     else:
         registro["tag_depois"] = registro["tag_antes"]
+
+    # 8.6. Teste de escrita (--test-write): rewrite no-op com o valor
+    # atual da BIOS para validar compatibilidade do modelo sem alterar
+    # nenhum dado real. Executado independente de --write (pode ser
+    # combinado com DRY-RUN). Nao atualiza BBconfig.conf.
+    if getattr(args, "test_write", False):
+        gravar_log_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
+            "[TEST-WRITE] Iniciando validacao de capacidade de gravacao...",
+            caminho_log_local, args.verbose, args.csv)
+        registro["teste_escrita"] = tenta_teste_escrita_remoto(
+            ip, ssh_user, sudo_cmd,
+            registro["tag_antes"],
+            args, caminho_log_remoto, caminho_log_local,
+        )
+        gravar_log_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
+            "[TEST-WRITE] Resultado: {}".format(registro["teste_escrita"]),
+            caminho_log_local, args.verbose, args.csv)
 
     # 8.5. Sincroniza BBconfig.conf remoto com o BEM_NUMERO usado na
     # gravacao. So executa com --write e apos gravacao confirmada
