@@ -16,7 +16,7 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.1
+# VERSION: 2.1.2
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -155,22 +155,22 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         "tag_depois":      15,
         "resultado":       13,
         "bbconfig_sync":   17,
-        "bbconfig_backup": 50,
         "mac":             52,
     }
     CABECALHOS = [
         "IP", "Hostname", "Placa", "BIOS", "SMBIOS", "WSMT",
         "Tag Antes", "BEM conf", "BEM usado", "Tag Depois",
-        "Resultado", "BBconfig", "Backup", "MAC",
+        "Resultado", "BBconfig", "MAC",
     ]
 
     div = "+-" + "-+-".join("-" * (v + 2) for v in C.values()) + "-+"
     cab = "| " + " | ".join(_cel(h, w) for h, w in zip(CABECALHOS, C.values())) + " |"
+    sep = "=" * len(cab)
 
     _escreve("")
-    _escreve("=" * len(div))
+    _escreve(sep)
     _escreve("RESUMO DETALHADO -- {} equipamento(s) processado(s)".format(len(registros)))
-    _escreve("=" * len(div))
+    _escreve(sep)
     _escreve(div)
     _escreve(cab)
     _escreve(div)
@@ -178,12 +178,12 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     for r in registros:
         linha_valores = dict(r)
         linha_valores["board"] = _normaliza_fabricante(r.get("board", "N/D"))
-        partes = []
-        for k, w in C.items():
-            if k == "bbconfig_backup":
-                partes.append(_cel_raw(linha_valores.get(k, ""), w))
-            else:
-                partes.append(_cel(linha_valores.get(k, "N/D"), w))
+        # bbconfig_sync: substitui N/A por DRY-RUN quando o resultado
+        # do host for DRY-RUN, tornando o motivo do N/A explicito.
+        if (str(r.get("resultado", "")) == "DRY-RUN"
+                and linha_valores.get("bbconfig_sync") == "N/A"):
+            linha_valores["bbconfig_sync"] = "DRY-RUN"
+        partes = [_cel(linha_valores.get(k, "N/D"), w) for k, w in C.items()]
         _escreve("| " + " | ".join(partes) + " |")
 
     _escreve(div)
@@ -213,10 +213,11 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     CABECALHOS_S = ["BIOS", "-w", "Status", "Qtd", "Observacao"]
     div_s = "+-" + "-+-".join("-" * (v + 2) for v in CS.values()) + "-+"
     cab_s = "| " + " | ".join(_cel(h, w) for h, w in zip(CABECALHOS_S, CS.values())) + " |"
+    sep_s = "=" * len(cab_s)
 
-    _escreve("=" * len(div_s))
+    _escreve(sep_s)
     _escreve("SUMARIO AGREGADO")
-    _escreve("=" * len(div_s))
+    _escreve(sep_s)
     _escreve(div_s)
     _escreve(cab_s)
     _escreve(div_s)
