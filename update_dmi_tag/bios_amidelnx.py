@@ -13,13 +13,20 @@
 #              garante_amidelnx_remoto, em ssh_utils.py) antes de
 #              executar.
 #
-# AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.1.4
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
+# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-15 - v2.1.4 - aplica _filtra_banner no stdout e
+#                        stderr retornados pelo ssh_run antes de passar
+#                        para _parse_resultado_amide em
+#                        executa_amidelnx_remoto. Corrige falsos
+#                        FALHOU-todos causados pelo banner corporativo
+#                        SSH vazando para stdout em servidores mais
+#                        antigos (Gigabyte/PERTOSA com SLES legado).
 #
 # =======================================================================
 
@@ -28,7 +35,7 @@ import subprocess
 
 from .constants import MecanismoIndisponivelError
 from .logging_utils import gravar_log, gravar_log_remoto
-from .ssh_utils import ssh_run, garante_amidelnx_remoto
+from .ssh_utils import ssh_run, garante_amidelnx_remoto, _filtra_banner
 
 
 def _parse_resultado_amide(stdout, stderr):
@@ -179,6 +186,13 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
 
     cmd_remoto = "{} {} /ca {}".format(sudo_cmd, caminho_amide_remoto, tag)
     rc, stdout, stderr = ssh_run(ip, ssh_user, cmd_remoto, timeout=30)
+
+    # Remove o banner corporativo que pode vazar para stdout em alguns
+    # servidores SSH (ex: Gigabyte/PERTOSA com SLES mais antigo).
+    # Sem este filtro, o banner empurra "Done" para baixo e o parser
+    # nao o encontra, resultando em FALHOU mesmo quando a gravacao OK.
+    stdout = _filtra_banner(stdout)
+    stderr = _filtra_banner(stderr)
 
     sucesso, detalhe = _parse_resultado_amide(stdout, stderr)
     if sucesso:

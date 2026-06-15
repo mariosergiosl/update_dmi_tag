@@ -30,14 +30,15 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.4
-#
+# VERSION: 2.1.5
 # CREATED: 2026-05-29
-# REVISION: 2026-06-15 - v2.1.4 - adiciona argumento --test-write para
-#                        validacao de capacidade de gravacao via rewrite
-#                        no-op (cascata amidelnx_64 -> amibios_dmi com
-#                        o valor atual da BIOS). Resultado exibido na
-#                        coluna Teste Escrita da tabela de resumo.
+# REVISION: 2026-06-15 - v2.1.4 - adiciona argumento --test-write.
+# REVISION: 2026-06-15 - v2.1.5 - loga a linha de comando completa
+#                        (sys.argv via shlex.quote) no cabecalho de
+#                        execucao para rastreabilidade. Mensagem "Modo"
+#                        passa a incluir descricao de TEST-WRITE quando
+#                        --test-write esta ativo. Aplicado em modo
+#                        remoto e standalone.
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py
 #                        (arquivo unico) na modularizacao em pacote.
 #                        Logica de main() e checa_superusuario()
@@ -335,8 +336,21 @@ def main():
         _log_local("INFO", "User  : {}".format(args.ssh_user))
         _log_local("INFO", "Amide : {}".format(args.amide_local_path))
         _log_local("INFO", "Log   : {}".format(args.log_local))
-        _log_local("INFO", "Modo  : {}".format(
-            "GRAVACAO REAL" if args.write else "DRY-RUN (simulacao)"))
+
+        # Monta descricao do modo de execucao (combinacoes possiveis)
+        if args.write:
+            modo_desc = "GRAVACAO REAL"
+        else:
+            modo_desc = "DRY-RUN (simulacao -- sem gravacao na BIOS)"
+        if getattr(args, "test_write", False):
+            modo_desc += " + TEST-WRITE (rewrite no-op para validar compatibilidade)"
+        _log_local("INFO", "Modo  : {}".format(modo_desc))
+
+        # Loga a linha de comando completa para rastreabilidade e auditoria
+        import shlex
+        _log_local("INFO", "Cmd   : {}".format(
+            " ".join(shlex.quote(a) for a in sys.argv)))
+
         if args.production:
             _log_local("WARNING",
                        "PRODUCTION ativado: reinstall-enable e reboot serao executados.")
@@ -380,10 +394,22 @@ def main():
                "update_dmi_tag.py v{} (Python {})".format(
                    SCRIPT_VERSION, sys.version.split()[0]),
                args.verbose, args.csv)
+
+    if args.write:
+        _modo_standalone = "GRAVACAO REAL"
+    else:
+        _modo_standalone = "DRY-RUN (simulacao -- sem gravacao na BIOS)"
+    if getattr(args, "test_write", False):
+        _modo_standalone += " + TEST-WRITE (rewrite no-op para validar compatibilidade)"
     gravar_log(args.log_file, "INFO",
-               "Modo: {}".format(
-                   "GRAVACAO REAL" if args.write else "DRY-RUN (simulacao)"),
+               "Modo: {}".format(_modo_standalone),
                args.verbose, args.csv)
+
+    import shlex as _shlex
+    gravar_log(args.log_file, "INFO",
+               "Cmd : {}".format(" ".join(_shlex.quote(a) for a in sys.argv)),
+               args.verbose, args.csv)
+
     if args.production:
         gravar_log(args.log_file, "WARNING",
                    "PRODUCTION ativado: reinstall-enable e reboot serao executados.",
