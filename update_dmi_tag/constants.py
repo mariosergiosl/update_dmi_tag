@@ -13,9 +13,9 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.0
+# VERSION: 2.1.2
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py (arquivo
+# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py (arquivo
 #                        unico) na modularizacao em pacote. Conteudo
 #                        identico ao bloco de constantes original.
 #
@@ -60,7 +60,7 @@ class TodosMecanismosFalharam(Exception):
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
 
-SCRIPT_VERSION = "2.1.0"
+SCRIPT_VERSION = "2.1.2"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"

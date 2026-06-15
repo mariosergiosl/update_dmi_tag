@@ -8,7 +8,7 @@
 # USAGE: update_dmi_tag.py [opcoes]
 #        update_dmi_tag.py --hosts <arquivo> [opcoes]
 #
-# DESCRIPTION: Shim de compatibilidade. A partir da v2.1.0, a logica do
+# DESCRIPTION: Shim de compatibilidade. A partir da v2.1.2, a logica do
 #              script foi modularizada no pacote update_dmi_tag/ (14
 #              modulos). Este arquivo preserva o comando de execucao
 #              historico -- "python3 update_dmi_tag.py [opcoes]" --
@@ -37,10 +37,10 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
 #
-# VERSION: 2.1.0
+# VERSION: 2.1.2
 #
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.0 - criacao do shim na modularizacao em
+# REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
 #                        pacote. Todo o codigo anterior (3.586 linhas em
 #                        arquivo unico) foi distribuido em 14 modulos
 #                        dentro de update_dmi_tag/. Ver

@@ -30,10 +30,10 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
 #
-# VERSION: 2.1.0
+# VERSION: 2.1.2
 #
 # CREATED: 2026-05-29
-# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py
+# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py
 #                        (arquivo unico) na modularizacao em pacote.
 #                        Logica de main() e checa_superusuario()
 #                        identica. Unica mudanca funcional: o default de
