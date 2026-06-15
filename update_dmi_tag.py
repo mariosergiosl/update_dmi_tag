@@ -31,7 +31,7 @@
 #
 # AUTHOR: Mario Luz
 #
-# VERSION: 2.0.3
+# VERSION: 2.1.0
 #
 # CREATED: 2026-05-29
 # REVISION: 2026-06-01 - Auditoria de versoes (RPM, modulo, script), distincao
@@ -76,6 +76,35 @@
 #                            todas as rodadas em um unico arquivo. Cada
 #                            nova execucao e separada por linha em
 #                            branco do bloco anterior.
+#           2026-06-12 - v2.1.0: duas funcionalidades novas e melhoria
+#                        de relatorio:
+#                        (1) Sincronizacao do BBconfig.conf apos
+#                            gravacao bem-sucedida na BIOS (somente com
+#                            --write). Se o BEM_NUMERO em uso diferir do
+#                            valor no BBconfig.conf remoto/local, o
+#                            script faz backup do arquivo original
+#                            (timestamp + usuario SSH no nome), marca o
+#                            backup como imutavel (chattr +i, melhor
+#                            esforco), atualiza BEM_NUMERO no arquivo
+#                            original via sed -i, e confirma o novo
+#                            valor com grep. Nome do backup e logado e
+#                            aparece na tabela de resumo. Implementado
+#                            tanto para modo remoto (sincroniza_bbcon-
+#                            fig_remoto) quanto standalone (sincroni-
+#                            za_bbconfig_local).
+#                        (2) Tabela de resumo (monta_tabela_resumo)
+#                            reescrita: tabela detalhada agora inclui
+#                            colunas BIOS (distingue H4U02PER de H4U03
+#                            etc, antes confundidos sob "Daten Tecnolo-
+#                            gia Ltda DH..."), BBconfig (status da
+#                            sincronizacao) e Backup (nome do arquivo
+#                            gerado). Nome do fabricante "Daten
+#                            Tecnologia Ltda" normalizado para "Daten"
+#                            para liberar espaco. Apos a tabela
+#                            detalhada, novo SUMARIO AGREGADO agrupa por
+#                            (BIOS, flag -w, Resultado) com contagem e
+#                            descricao em linguagem natural do que cada
+#                            status significa.
 #
 # =======================================================================
 #
@@ -158,7 +187,7 @@ class TodosMecanismosFalharam(Exception):
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
 
-SCRIPT_VERSION = "2.0.3"
+SCRIPT_VERSION = "2.1.0"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -1593,6 +1622,327 @@ def le_valor_configuracao_remoto(ip, ssh_user, caminho_config, nome_var,
     return valor_remoto
 
 
+# =======================================================================
+# SINCRONIZACAO DO ARQUIVO DE CONFIGURACAO (BBconfig.conf)
+#
+# Apos a gravacao bem-sucedida da tag na BIOS (resultado_escrita
+# comecando com "OK") e somente com --write, sincroniza o valor de
+# BEM_NUMERO no arquivo de configuracao se ele divergir do valor usado
+# para a gravacao. Faz backup do arquivo original antes de editar,
+# marca o backup como imutavel (chattr +i, melhor esforco) e confirma
+# o novo valor com grep. Em falha na edicao, tenta rollback a partir
+# do backup.
+# =======================================================================
+
+def _nome_backup_bbconfig(caminho_config, identificador):
+    """
+    NAME: _nome_backup_bbconfig
+    DESCRIPTION: Monta o nome do arquivo de backup do arquivo de
+                 configuracao, no formato:
+                   <caminho_config>.<YYYY-MM-DD_HHMMSS>_<identificador>.bak
+                 O identificador (geralmente o usuario SSH ou usuario
+                 local) permite auditar quem gerou o backup e quando.
+    PARAMETER: caminho_config - caminho do arquivo original
+               identificador  - usuario a incluir no nome (sem espacos)
+    RETURNS: str -- caminho completo do arquivo de backup
+    """
+    timestamp = time.strftime("%Y-%m-%d_%H%M%S")
+    ident = "".join(c for c in identificador if c.isalnum() or c in "._-") or "unknown"
+    return "{}.{}_{}.bak".format(caminho_config, timestamp, ident)
+
+
+def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
+                                bem_conf, bem_usado,
+                                caminho_log, caminho_log_local,
+                                verbose, suprime_tela):
+    """
+    NAME: sincroniza_bbconfig_remoto
+    DESCRIPTION: Sincroniza BEM_NUMERO no arquivo de configuracao remoto
+                 quando o valor usado para gravar a tag (bem_usado)
+                 difere do valor atualmente presente no arquivo
+                 (bem_conf). Fluxo:
+                   1. Se bem_conf == bem_usado: nada a fazer (IGUAL).
+                   2. Verifica existencia do arquivo remoto.
+                   3. Gera nome de backup com timestamp + ssh_user.
+                   4. sudo cp -p <config> <backup>
+                   5. sudo chattr +i <backup> (melhor esforco; falha
+                      nao impede a sincronizacao, apenas gera WARNING).
+                   6. sudo sed -i 's/^VAR=.*/VAR="novo"/' <config>
+                   7. Confirma com grep que o novo valor esta presente.
+                   8. Em falha do passo 6/7, tenta rollback: chattr -i
+                      no backup + cp do backup de volta ao original.
+                 Todas as etapas sao logadas com prefixo [IP]. O nome
+                 do backup gerado e sempre logado quando criado, mesmo
+                 se passos posteriores falharem (para permitir limpeza
+                 manual).
+    PARAMETER: ip                - endereco IP do host remoto
+               ssh_user          - usuario SSH (tambem usado no nome
+                                    do backup)
+               sudo_cmd          - prefixo sudo no host remoto
+               caminho_config    - caminho do arquivo de configuracao
+               nome_var          - nome da variavel (ex: BEM_NUMERO)
+               bem_conf          - valor atual no arquivo ("PENDENTE"
+                                    se ausente)
+               bem_usado         - valor usado para gravar a tag
+               caminho_log       - log remoto
+               caminho_log_local - log consolidado local
+               verbose           - modo verbose
+               suprime_tela      - suprime stdout
+    RETURNS: dict -- {"sincronizado": bool, "backup": str ou None,
+                       "motivo": str}
+             motivo e um codigo curto: "IGUAL", "OK", "SEM-ARQUIVO",
+             "FALHOU-backup", "FALHOU-chattr-ok-mesmo-assim",
+             "FALHOU-sed-rollback-ok", "FALHOU-sed-rollback-falhou",
+             "FALHOU-confirmacao".
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
+                          caminho_log_local, verbose, suprime_tela)
+
+    # 1. Ja sincronizado -- nada a fazer
+    if bem_conf and bem_conf == bem_usado:
+        _log("DEBUG", "BBconfig.conf ja sincronizado ({}={}).".format(
+            nome_var, bem_usado))
+        return {"sincronizado": True, "backup": None, "motivo": "IGUAL"}
+
+    # 2. Verifica existencia do arquivo remoto
+    rc_test, _, _ = ssh_run(
+        ip, ssh_user, "{} test -f {}".format(sudo_cmd, caminho_config),
+        timeout=10)
+    if rc_test != 0:
+        _log("WARNING",
+             "BBconfig.conf nao encontrado em {}: sincronizacao pulada.".format(
+                 caminho_config))
+        return {"sincronizado": False, "backup": None, "motivo": "SEM-ARQUIVO"}
+
+    # 3. Nome do backup
+    backup_path = _nome_backup_bbconfig(caminho_config, ssh_user)
+
+    # 4. Backup (cp -p preserva permissoes e timestamps)
+    rc_cp, _, err_cp = ssh_run(
+        ip, ssh_user,
+        "{} cp -p {} {}".format(sudo_cmd, caminho_config, backup_path),
+        timeout=15)
+    if rc_cp != 0:
+        _log("ERROR",
+             "Falha ao criar backup de {} em {}: {}".format(
+                 caminho_config, backup_path, (err_cp or "").strip()))
+        return {"sincronizado": False, "backup": None, "motivo": "FALHOU-backup"}
+
+    _log("INFO", "Backup de {} criado: {}".format(caminho_config, backup_path))
+
+    # 5. Imutabilidade do backup (melhor esforco)
+    rc_chattr, _, err_chattr = ssh_run(
+        ip, ssh_user,
+        "{} chattr +i {}".format(sudo_cmd, backup_path),
+        timeout=10)
+    chattr_ok = (rc_chattr == 0)
+    if not chattr_ok:
+        _log("WARNING",
+             "chattr +i falhou em {} (sistema de arquivos pode nao suportar): {}".format(
+                 backup_path, (err_chattr or "").strip()))
+
+    # 6. Edita o arquivo original via sed -i
+    # Usa aspas simples no shell remoto; nome_var e bem_usado sao
+    # numericos/identificadores sem caracteres especiais de sed.
+    sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
+    rc_sed, _, err_sed = ssh_run(
+        ip, ssh_user,
+        "{} sed -i '{}' {}".format(sudo_cmd, sed_expr, caminho_config),
+        timeout=15)
+
+    if rc_sed != 0:
+        _log("ERROR",
+             "sed -i falhou em {}: {}. Tentando rollback a partir do backup.".format(
+                 caminho_config, (err_sed or "").strip()))
+        return _rollback_bbconfig(
+            ip, ssh_user, sudo_cmd, caminho_config, backup_path,
+            chattr_ok, "FALHOU-sed", _log)
+
+    # 7. Confirma o novo valor
+    cmd_confirma = "grep '^{}=' {} 2>/dev/null | cut -d= -f2 | tr -d '\"'".format(
+        nome_var, caminho_config)
+    _, stdout_confirma, _ = ssh_run(ip, ssh_user, cmd_confirma, timeout=10)
+    valor_confirmado = stdout_confirma.strip()
+
+    if valor_confirmado != bem_usado:
+        _log("ERROR",
+             "Confirmacao pos-sed falhou: esperado '{}', encontrado '{}'. "
+             "Tentando rollback.".format(bem_usado, valor_confirmado))
+        return _rollback_bbconfig(
+            ip, ssh_user, sudo_cmd, caminho_config, backup_path,
+            chattr_ok, "FALHOU-confirmacao", _log)
+
+    _log("INFO",
+         "BBconfig.conf atualizado: {}={} -> {}={}. Backup: {}".format(
+             nome_var, bem_conf or "PENDENTE", nome_var, bem_usado, backup_path))
+
+    return {"sincronizado": True, "backup": backup_path, "motivo": "OK"}
+
+
+def _rollback_bbconfig(ip, ssh_user, sudo_cmd, caminho_config, backup_path,
+                       chattr_ok, motivo_base, _log):
+    """
+    NAME: _rollback_bbconfig
+    DESCRIPTION: Restaura o arquivo de configuracao remoto a partir do
+                 backup apos falha na edicao. Remove a imutabilidade do
+                 backup (se havia sido aplicada) antes de copiar de
+                 volta, e a reaplica em seguida para preservar o
+                 backup intacto para auditoria posterior.
+    PARAMETER: ip, ssh_user, sudo_cmd, caminho_config, backup_path -
+               mesmos significados de sincroniza_bbconfig_remoto
+               chattr_ok    - se o chattr +i do backup havia funcionado
+               motivo_base  - prefixo do motivo de falha original
+               _log         - funcao de log fechada sobre o contexto
+    RETURNS: dict -- {"sincronizado": False, "backup": backup_path,
+                       "motivo": "<motivo_base>-rollback-ok"
+                                  ou "<motivo_base>-rollback-falhou"}
+    """
+    if chattr_ok:
+        ssh_run(ip, ssh_user, "{} chattr -i {}".format(sudo_cmd, backup_path),
+                timeout=10)
+
+    rc_restore, _, err_restore = ssh_run(
+        ip, ssh_user,
+        "{} cp -p {} {}".format(sudo_cmd, backup_path, caminho_config),
+        timeout=15)
+
+    # Reaplica imutabilidade no backup para preservar evidencia
+    if chattr_ok:
+        ssh_run(ip, ssh_user, "{} chattr +i {}".format(sudo_cmd, backup_path),
+                timeout=10)
+
+    if rc_restore == 0:
+        _log("WARNING",
+             "Rollback de {} a partir do backup {} concluido.".format(
+                 caminho_config, backup_path))
+        return {"sincronizado": False, "backup": backup_path,
+                "motivo": "{}-rollback-ok".format(motivo_base)}
+
+    _log("ERROR",
+         "Rollback de {} FALHOU: {}. Arquivo pode estar em estado "
+         "inconsistente. Backup preservado em {}.".format(
+             caminho_config, (err_restore or "").strip(), backup_path))
+    return {"sincronizado": False, "backup": backup_path,
+            "motivo": "{}-rollback-falhou".format(motivo_base)}
+
+
+def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
+                               caminho_log, verbose, suprime_tela,
+                               caminho_log_local=""):
+    """
+    NAME: sincroniza_bbconfig_local
+    DESCRIPTION: Equivalente local (modo standalone) de
+                 sincroniza_bbconfig_remoto. Mesma logica de backup com
+                 timestamp + usuario local, chattr +i no backup, sed -i
+                 no original e confirmacao via grep, com rollback em
+                 falha. Todos os comandos sao executados localmente via
+                 subprocess com sudo.
+    PARAMETER: caminho_config    - caminho do arquivo de configuracao
+               nome_var          - nome da variavel (ex: BEM_NUMERO)
+               bem_conf          - valor atual no arquivo
+               bem_usado         - valor usado para gravar a tag
+               caminho_log       - log principal (standalone)
+               verbose           - modo verbose
+               suprime_tela      - suprime stdout
+               caminho_log_local - log consolidado (opcional)
+    RETURNS: dict -- mesmo formato de sincroniza_bbconfig_remoto
+    """
+    def _log(nivel, msg):
+        gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
+                   caminho_log_local)
+
+    if bem_conf and bem_conf == bem_usado:
+        _log("DEBUG", "BBconfig.conf ja sincronizado ({}={}).".format(
+            nome_var, bem_usado))
+        return {"sincronizado": True, "backup": None, "motivo": "IGUAL"}
+
+    if not os.path.isfile(caminho_config):
+        _log("WARNING",
+             "BBconfig.conf nao encontrado em {}: sincronizacao pulada.".format(
+                 caminho_config))
+        return {"sincronizado": False, "backup": None, "motivo": "SEM-ARQUIVO"}
+
+    identificador = _detecta_usuario_sessao()
+    backup_path = _nome_backup_bbconfig(caminho_config, identificador)
+
+    def _run(cmd_lista, timeout=15):
+        try:
+            r = subprocess.run(cmd_lista, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=timeout,
+                                check=False)
+            return r.returncode, r.stdout, r.stderr
+        except Exception as e:
+            return 1, "", str(e)
+
+    rc_cp, _, err_cp = _run(["sudo", "cp", "-p", caminho_config, backup_path])
+    if rc_cp != 0:
+        _log("ERROR", "Falha ao criar backup de {} em {}: {}".format(
+            caminho_config, backup_path, (err_cp or "").strip()))
+        return {"sincronizado": False, "backup": None, "motivo": "FALHOU-backup"}
+
+    _log("INFO", "Backup de {} criado: {}".format(caminho_config, backup_path))
+
+    rc_chattr, _, err_chattr = _run(["sudo", "chattr", "+i", backup_path], timeout=10)
+    chattr_ok = (rc_chattr == 0)
+    if not chattr_ok:
+        _log("WARNING",
+             "chattr +i falhou em {} (sistema de arquivos pode nao suportar): {}".format(
+                 backup_path, (err_chattr or "").strip()))
+
+    sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
+    rc_sed, _, err_sed = _run(["sudo", "sed", "-i", sed_expr, caminho_config])
+
+    def _rollback_local(motivo_base):
+        if chattr_ok:
+            _run(["sudo", "chattr", "-i", backup_path], timeout=10)
+        rc_restore, _, err_restore = _run(["sudo", "cp", "-p", backup_path, caminho_config])
+        if chattr_ok:
+            _run(["sudo", "chattr", "+i", backup_path], timeout=10)
+        if rc_restore == 0:
+            _log("WARNING", "Rollback de {} a partir do backup {} concluido.".format(
+                caminho_config, backup_path))
+            return {"sincronizado": False, "backup": backup_path,
+                    "motivo": "{}-rollback-ok".format(motivo_base)}
+        _log("ERROR",
+             "Rollback de {} FALHOU: {}. Backup preservado em {}.".format(
+                 caminho_config, (err_restore or "").strip(), backup_path))
+        return {"sincronizado": False, "backup": backup_path,
+                "motivo": "{}-rollback-falhou".format(motivo_base)}
+
+    if rc_sed != 0:
+        _log("ERROR", "sed -i falhou em {}: {}. Tentando rollback.".format(
+            caminho_config, (err_sed or "").strip()))
+        return _rollback_local("FALHOU-sed")
+
+    # Confirma
+    try:
+        with open(caminho_config, "r", encoding="utf-8", errors="ignore") as f:
+            valor_confirmado = ""
+            for linha in f:
+                linha_l = linha.strip()
+                if linha_l.startswith("{}=".format(nome_var)):
+                    valor_confirmado = linha_l.split("=", 1)[1].strip().strip("'\"")
+                    break
+    except Exception as e:
+        _log("ERROR", "Falha ao reabrir {} para confirmacao: {}. Tentando rollback.".format(
+            caminho_config, e))
+        return _rollback_local("FALHOU-confirmacao")
+
+    if valor_confirmado != bem_usado:
+        _log("ERROR",
+             "Confirmacao pos-sed falhou: esperado '{}', encontrado '{}'. "
+             "Tentando rollback.".format(bem_usado, valor_confirmado))
+        return _rollback_local("FALHOU-confirmacao")
+
+    _log("INFO",
+         "BBconfig.conf atualizado: {}={} -> {}={}. Backup: {}".format(
+             nome_var, bem_conf or "PENDENTE", nome_var, bem_usado, backup_path))
+
+    return {"sincronizado": True, "backup": backup_path, "motivo": "OK"}
+
+
 def valida_e_calcula_tag(valor_config, caminho_log, verbose, suprime_tela,
                           caminho_log_local=""):
     """
@@ -2315,6 +2665,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         "ip":           ip,
         "hostname":     "N/D",
         "board":        "N/D",
+        "bios":         "N/D",
         "smbios":       "N/D",
         "wsmt":         "N/D",
         "tag_antes":    "N/D",
@@ -2323,6 +2674,8 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         "tag_depois":   "N/D",
         "mecanismo":    "N/D",
         "resultado":    "INACESSIVEL",
+        "bbconfig_sync":   "N/A",
+        "bbconfig_backup": "",
     }
 
     def _log(nivel, msg, sudo_cmd=""):
@@ -2367,6 +2720,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
     registro["hostname"]  = dados_amb.get("hostname",    "N/D")
     registro["board"]     = "{} {}".format(
         dados_amb.get("board_vendor", ""), dados_amb.get("board_name", "")).strip()
+    registro["bios"]      = dados_amb.get("bios_version", "N/D")
     registro["smbios"]    = dados_amb.get("smbios_version", "N/D")
     registro["wsmt"]      = dados_amb.get("wsmt",          "N/D")
     registro["tag_antes"] = dados_amb.get("tag_atual",     "N/D")
@@ -2492,6 +2846,25 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
     else:
         registro["tag_depois"] = registro["tag_antes"]
 
+    # 8.5. Sincroniza BBconfig.conf remoto com o BEM_NUMERO usado na
+    # gravacao. So executa com --write e apos gravacao confirmada
+    # (resultado_escrita comecando com "OK"). Faz backup imutavel do
+    # arquivo original antes de editar; nome do backup vai para o
+    # registro e aparece na tabela de resumo.
+    if args.write and str(resultado_escrita).startswith("OK"):
+        sync_result = sincroniza_bbconfig_remoto(
+            ip, ssh_user, sudo_cmd, args.config, args.var,
+            bem_conf, bem_usar,
+            caminho_log_remoto, caminho_log_local, args.verbose, args.csv)
+        registro["bbconfig_sync"] = (
+            "OK" if sync_result["sincronizado"] else sync_result["motivo"])
+        registro["bbconfig_backup"] = sync_result.get("backup") or ""
+    elif str(resultado_escrita).startswith("OK") and not args.write:
+        # Defensivo: nao deveria ocorrer (resultado OK implica write),
+        # mas mantem o campo coerente caso a logica mude no futuro.
+        registro["bbconfig_sync"] = "N/A"
+    # Em DRY-RUN, FALHOU-todos, PENDENTE, INVALIDO: mantem default "N/A"
+
     # 9. Acoes finais --production
     # Guarda critica: reinstall-enable e reboot so devem executar quando
     # a gravacao da tag retornou sucesso. Sem essa guarda, hosts com
@@ -2567,11 +2940,89 @@ def _executa_acoes_production(ip, ssh_user, sudo_cmd, args,
     _log("INFO", "[PRODUCTION] Comando reboot enviado.")
 
 
-def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela):
+def _normaliza_fabricante(board):
+    """
+    NAME: _normaliza_fabricante
+    DESCRIPTION: Normaliza nomes de fabricante/placa verbosos para
+                 liberar espaco na tabela detalhada, sem perder a
+                 informacao relevante (a BIOS Info tem coluna propria).
+                 Atualmente normaliza apenas o caso observado:
+                   "Daten Tecnologia Ltda DH..." -> "Daten DH..."
+                 Demais fabricantes permanecem inalterados.
+    PARAMETER: board - string "fabricante modelo" (registro["board"])
+    RETURNS: str -- board normalizado
+    """
+    if not board:
+        return board
+    prefixo = "Daten Tecnologia Ltda"
+    if board.startswith(prefixo):
+        return "Daten" + board[len(prefixo):]
+    return board
+
+
+# Mapeamento de resultado/status para descricao em linguagem natural,
+# usado no sumario agregado. Chaves sao comparadas por prefixo (ex:
+# "FALHOU" cobre "FALHOU-todos"; "INACESSIVEL" e exato).
+_DESCRICOES_RESULTADO = (
+    ("OK-amidelnx", "Sucesso. Gravacao confirmada via amidelnx_64 (Mecanismo 1)."),
+    ("OK-amibios",  "Sucesso. Gravacao confirmada via amibios_dmi/sysfs (Mecanismo 2, fallback)."),
+    ("DRY-RUN",     "Leitura realizada com sucesso (Simulacao). Nenhuma gravacao executada."),
+    ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
+    ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
+    ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
+    ("INACESSIVEL", "Host nao respondeu via SSH (timeout, desligado, ou bootstrap de chave falhou)."),
+)
+
+
+def _descricao_resultado(resultado):
+    """
+    NAME: _descricao_resultado
+    DESCRIPTION: Traduz o codigo de resultado/status de um host para uma
+                 descricao em linguagem natural, usada no sumario
+                 agregado. Faz match por prefixo (primeira correspon-
+                 dencia na ordem de _DESCRICOES_RESULTADO). Se nenhum
+                 prefixo bater, retorna o proprio resultado como
+                 descricao (fallback seguro para status desconhecidos
+                 introduzidos no futuro).
+    PARAMETER: resultado - string de resultado (ex: "OK-amidelnx",
+               "FALHOU-todos", "INACESSIVEL")
+    RETURNS: str -- descricao em linguagem natural
+    """
+    resultado = str(resultado or "")
+    for prefixo, descricao in _DESCRICOES_RESULTADO:
+        if resultado.startswith(prefixo):
+            return descricao
+    return resultado
+
+
+def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
+                        write_ativo=False):
     """
     NAME: monta_tabela_resumo
-    DESCRIPTION: Tabela de resumo final sem coluna Mecanismo.
-                 Coluna Resultado e descritiva e clara.
+    DESCRIPTION: Gera duas tabelas no log final:
+                   1. TABELA DETALHADA -- uma linha por host, com
+                      colunas IP, Hostname, Placa (normalizada), BIOS,
+                      SMBIOS, WSMT, Tag Antes, BEM conf, BEM usado,
+                      Tag Depois, Resultado, BBconfig (status da
+                      sincronizacao do BBconfig.conf) e Backup (nome do
+                      arquivo de backup gerado, se houve).
+                   2. SUMARIO AGREGADO -- agrupa os registros por
+                      (BIOS, flag -w, Resultado), mostrando a contagem
+                      de cada combinacao e uma descricao em linguagem
+                      natural do que aquele resultado significa
+                      (_descricao_resultado). Permite avaliar o
+                      resultado de uma execucao em massa rapidamente,
+                      sem precisar ler linha a linha.
+                 Ambas as tabelas sao escritas no log local (se
+                 configurado) e no stdout (se nao suprimido).
+    PARAMETER: registros         - lista de dicts retornados por
+                                    processa_host_remoto
+               caminho_log_local - log consolidado local
+               verbose           - modo verbose
+               suprime_tela      - suprime stdout
+               write_ativo       - bool, valor de args.write desta
+                                    execucao (usado na coluna -w do
+                                    sumario agregado)
     """
     def _escreve(linha):
         if caminho_log_local:
@@ -2583,48 +3034,112 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela):
         if not suprime_tela:
             sys.stdout.write(linha + "\n")
 
-    # Colunas sem "mecanismo" -- espaco extra vai para "resultado"
+    def _cel(valor, largura):
+        s = str(valor if valor not in (None, "") else "N/D")
+        return s[:largura].ljust(largura)
+
+    def _cel_raw(valor, largura):
+        """Como _cel, mas string vazia permanece vazia (nao vira N/D).
+        Usado para colunas onde 'vazio' e um valor valido, como Backup
+        (nenhum backup foi gerado)."""
+        s = str(valor) if valor is not None else ""
+        return s[:largura].ljust(largura)
+
+    # =====================================================================
+    # 1. TABELA DETALHADA
+    # =====================================================================
     C = {
-        "ip":         15,
-        "hostname":   16,
-        "board":      24,
-        "smbios":      7,
-        "wsmt":        7,
-        "tag_antes":  16,
-        "bem_conf":   14,
-        "bem_usado":  14,
-        "tag_depois": 16,
-        "resultado":  18,
+        "ip":              15,
+        "hostname":        13,
+        "board":           17,
+        "bios":            12,
+        "smbios":           7,
+        "wsmt":             7,
+        "tag_antes":       15,
+        "bem_conf":        14,
+        "bem_usado":       14,
+        "tag_depois":      15,
+        "resultado":       13,
+        "bbconfig_sync":   17,
+        "bbconfig_backup": 50,
     }
     CABECALHOS = [
-        "IP", "Hostname", "Placa", "SMBIOS", "WSMT",
-        "Tag Antes", "BEM conf", "BEM usado",
-        "Tag Depois", "Resultado",
+        "IP", "Hostname", "Placa", "BIOS", "SMBIOS", "WSMT",
+        "Tag Antes", "BEM conf", "BEM usado", "Tag Depois",
+        "Resultado", "BBconfig", "Backup",
     ]
-
-    def _cel(valor, largura):
-        s = str(valor or "N/D")
-        return s[:largura].ljust(largura)
 
     div = "+-" + "-+-".join("-" * (v + 2) for v in C.values()) + "-+"
     cab = "| " + " | ".join(_cel(h, w) for h, w in zip(CABECALHOS, C.values())) + " |"
 
     _escreve("")
     _escreve("=" * len(div))
-    _escreve("RESUMO FINAL -- {} equipamento(s) processado(s)".format(len(registros)))
+    _escreve("RESUMO DETALHADO -- {} equipamento(s) processado(s)".format(len(registros)))
     _escreve("=" * len(div))
     _escreve(div)
     _escreve(cab)
     _escreve(div)
 
     for r in registros:
-        partes = [_cel(r.get(k, "N/D"), w) for k, w in C.items()]
+        linha_valores = dict(r)
+        linha_valores["board"] = _normaliza_fabricante(r.get("board", "N/D"))
+        partes = []
+        for k, w in C.items():
+            if k == "bbconfig_backup":
+                partes.append(_cel_raw(linha_valores.get(k, ""), w))
+            else:
+                partes.append(_cel(linha_valores.get(k, "N/D"), w))
         _escreve("| " + " | ".join(partes) + " |")
 
     _escreve(div)
     _escreve("")
 
-    # Contadores por prefixo do resultado
+    # =====================================================================
+    # 2. SUMARIO AGREGADO
+    # =====================================================================
+    # Agrupa por (BIOS, flag -w, Resultado). A ordem de insercao do dict
+    # e preservada (Python 3.7+), mantendo a ordem em que os grupos
+    # aparecem na execucao.
+    grupos = {}
+    flag_w = "-w" if write_ativo else ""
+    for r in registros:
+        bios = r.get("bios", "N/D") or "N/D"
+        resultado = r.get("resultado", "N/D") or "N/D"
+        chave = (bios, flag_w, resultado)
+        grupos[chave] = grupos.get(chave, 0) + 1
+
+    CS = {
+        "bios":       15,
+        "flag_w":      5,
+        "resultado":  14,
+        "qtd":         5,
+        "observacao": 80,
+    }
+    CABECALHOS_S = ["BIOS", "-w", "Status", "Qtd", "Observacao"]
+    div_s = "+-" + "-+-".join("-" * (v + 2) for v in CS.values()) + "-+"
+    cab_s = "| " + " | ".join(_cel(h, w) for h, w in zip(CABECALHOS_S, CS.values())) + " |"
+
+    _escreve("=" * len(div_s))
+    _escreve("SUMARIO AGREGADO")
+    _escreve("=" * len(div_s))
+    _escreve(div_s)
+    _escreve(cab_s)
+    _escreve(div_s)
+
+    for (bios, fw, resultado), qtd in grupos.items():
+        observacao = _descricao_resultado(resultado)
+        valores = {
+            "bios": bios, "flag_w": fw, "resultado": resultado,
+            "qtd": qtd, "observacao": observacao,
+        }
+        partes = [_cel(valores[k], w) for k, w in CS.items()]
+        _escreve("| " + " | ".join(partes) + " |")
+
+    _escreve(div_s)
+    _escreve("")
+
+    # Contadores globais por prefixo do resultado (mantidos por
+    # compatibilidade com versoes anteriores do log)
     ok     = sum(1 for r in registros if str(r.get("resultado","")).startswith("OK"))
     dryrun = sum(1 for r in registros if r.get("resultado") == "DRY-RUN")
     falhou = sum(1 for r in registros if str(r.get("resultado","")).startswith("FALHOU"))
@@ -2873,7 +3388,8 @@ def main():
                 ip, bem_lista, args, args.log_local)
             registros.append(registro)
 
-        monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv)
+        monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv,
+                            write_ativo=args.write)
 
         _log_local("INFO", "=" * 70)
         _log_local("INFO", "FINALE")
@@ -2981,6 +3497,16 @@ def main():
                        "--- Atualizacao concluida: {} ---".format(resultado_escrita),
                        args.verbose, args.csv)
             retorno = RC_OK
+
+            # Sincroniza BBconfig.conf local com a tag de 14 digitos
+            # gravada na BIOS, caso o arquivo ainda contenha o valor de
+            # 13 digitos (ou qualquer valor diferente do gravado). So
+            # executa com --write (implicito aqui, pois resultado_escrita
+            # so comeca com "OK" quando args.write esta ativo).
+            if args.write:
+                sincroniza_bbconfig_local(
+                    args.config, args.var, valor_config, tag_esperada,
+                    args.log_file, args.verbose, args.csv)
         elif resultado_escrita == "DRY-RUN":
             valor_novo = valor_antigo
             retorno    = RC_OK
