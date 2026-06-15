@@ -17,9 +17,9 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.0
+# VERSION: 2.1.2
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
+# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
 #
