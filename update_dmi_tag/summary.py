@@ -13,7 +13,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.4
+# VERSION: 2.1.5
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -103,6 +103,7 @@ _DESCRICOES_RESULTADO = (
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
     ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
+    ("SEM-SUDO",    "Usuario sem privilegio sudo no host (ou --sudo-pass incorreto/ausente). Escrita nao tentada."),
     ("INACESSIVEL", "Host nao respondeu via SSH (timeout, desligado, ou bootstrap de chave falhou)."),
 )
 

@@ -14,13 +14,21 @@
 #              garante_amidelnx_remoto verifica/copia o binario
 #              amidelnx_64 para o host remoto.
 #
-# AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.1.5
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-15 - v2.1.5 - detecta_sudo passa a retornar tupla
+#                        (prefixo_sudo, confirmado) em vez de so a
+#                        string do prefixo. confirmado=False quando
+#                        sudo -n falha E sudo -S tambem falha (ou
+#                        --sudo-pass nao foi fornecido). Permite ao
+#                        chamador (host_processor) detectar a ausencia
+#                        de privilegio e logar/abortar adequadamente
+#                        em vez de tentar gravar sem permissao.
 #
 # =======================================================================
 
@@ -114,28 +122,46 @@ def _filtra_banner(texto):
 def detecta_sudo(ip, ssh_user, sudo_pass=""):
     """
     NAME: detecta_sudo
-    DESCRIPTION: Detecta se o sudo no host remoto requer senha ou nao.
-                 Tenta primeiro sudo -n (sem senha). Se funcionar retorna
-                 "sudo". Se falhar e sudo_pass for fornecido, verifica se
-                 a senha funciona com sudo -S. Banner corporativo do BB
-                 e filtrado antes da avaliacao. Fallback: sudo sem senha.
+    DESCRIPTION: Detecta se o sudo no host remoto esta disponivel e
+                 funcional. Fluxo:
+                   1. Tenta sudo -n true (sem senha).
+                      rc=0 -> confirmado sem senha.
+                   2. Se falhar e sudo_pass fornecido, tenta com -S.
+                      Sucesso -> confirmado com senha.
+                   3. Se ambos falharem -> sudo NAO confirmado.
+                 Banner corporativo do BB e filtrado antes da avaliacao.
+
+                 IMPORTANTE: retorna TUPLA (prefixo_sudo, confirmado).
+                 - prefixo_sudo: string a prefixar nos comandos privilegiados
+                 - confirmado: bool -- True se o privilegio foi verificado,
+                   False se sudo nao esta disponivel ou a senha falhou.
+                 Quando confirmado=False o chamador DEVE logar WARNING e
+                 decidir se prossegue ou aborta o processamento do host.
+
     PARAMETER: ip        - endereco IP do host remoto
                ssh_user  - usuario SSH
                sudo_pass - senha do sudo (opcional)
-    RETURNS: str -- prefixo sudo a usar nos comandos remotos
+    RETURNS: tuple(str, bool) -- (prefixo_sudo, confirmado)
     """
+    # Tentativa 1: sudo sem senha
     rc, _, _ = ssh_run(ip, ssh_user, "sudo -n true 2>/dev/null", timeout=10)
     if rc == 0:
-        return "sudo"
+        return "sudo", True
+
+    # Tentativa 2: sudo com senha fornecida
     if sudo_pass:
         rc2, stdout2, _ = ssh_run(
             ip, ssh_user,
             "echo '{}' | sudo -S true 2>/dev/null && echo SUDOOK".format(sudo_pass),
             timeout=10,
         )
-        if 'SUDOOK' in _filtra_banner(stdout2) or rc2 == 0:
-            return "echo '{}' | sudo -S".format(sudo_pass)
-    return "sudo"
+        if "SUDOOK" in _filtra_banner(stdout2) or rc2 == 0:
+            return "echo '{}' | sudo -S".format(sudo_pass), True
+
+    # Nenhuma tentativa funcionou: sudo nao confirmado.
+    # Retorna prefixo "sudo" por compatibilidade com chamadores antigos,
+    # mas confirmado=False sinaliza ao chamador que o privilegio falhou.
+    return "sudo", False
 
 
 

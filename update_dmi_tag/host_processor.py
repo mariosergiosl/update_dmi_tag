@@ -15,7 +15,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.4
+# VERSION: 2.1.5
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -117,9 +117,21 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         return registro
 
     # 2. Detecta sudo
-    sudo_cmd = detecta_sudo(ip, ssh_user, sudo_pass)
-    _log("INFO", "sudo detectado: {}".format(
-        "sem senha" if sudo_cmd == "sudo" else "com senha"), sudo_cmd)
+    # detecta_sudo retorna (prefixo, confirmado):
+    #   confirmado=True  -> sudo verificado (sem senha ou com senha)
+    #   confirmado=False -> sudo indisponivel ou senha incorreta/ausente
+    # Quando nao confirmado: loga WARNING e continua apenas para coleta
+    # de dados (sem tentar gravar). A cascata de escrita nao e executada.
+    sudo_cmd, sudo_confirmado = detecta_sudo(ip, ssh_user, sudo_pass)
+    if sudo_confirmado:
+        _log("INFO", "sudo detectado: {}".format(
+            "sem senha" if sudo_cmd == "sudo" else "com senha"), sudo_cmd)
+    else:
+        _log("WARNING",
+             "sudo NAO confirmado (usuario sem privilegio ou --sudo-pass "
+             "incorreto/ausente). Coleta de ambiente sera feita sem sudo "
+             "(dados limitados). Gravacao na BIOS NAO sera tentada.",
+             sudo_cmd)
 
     # 3. Coleta dados de ambiente
     dados_amb = coletar_dados_ambiente_remoto(
@@ -241,6 +253,26 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
             caminho_log_local, args.verbose, args.csv)
 
     # 8. Cascata de escrita
+    # Guarda: so tenta gravar se sudo foi confirmado. Sem privilegio,
+    # a gravacao na BIOS falharia com "Permission denied" ou com o
+    # banner do sudo pedindo senha (que contamina a saida do amidelnx_64
+    # e causa falsos FALHOU-todos). Marca resultado como SEM-SUDO e
+    # pula toda a etapa de escrita, bbconfig e production.
+    if not sudo_confirmado and (args.write or getattr(args, "test_write", False)):
+        gravar_log_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, "ERROR",
+            "Escrita abortada: sudo nao confirmado. "
+            "Verifique se o usuario tem privilegio no host ou "
+            "forneca --sudo-pass correto.",
+            caminho_log_local, args.verbose, args.csv)
+        registro["resultado"] = "SEM-SUDO"
+        registro["tag_depois"] = registro["tag_antes"]
+        gravar_log_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
+            "====== Fim do processamento: {} -- SEM-SUDO ======".format(ip),
+            caminho_log_local, args.verbose, args.csv)
+        return registro
+
     resultado_escrita = tenta_escrever_tag_remoto(
         ip, ssh_user, sudo_cmd, tag_esperada, args,
         caminho_log_remoto, caminho_log_local,
