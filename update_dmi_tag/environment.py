@@ -17,11 +17,20 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# VERSION: 2.1.1
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
+# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
-# REVISION: 2026-06-15 - v2.1.2 - adiciona captura de MACs de todas as
+# REVISION: 2026-06-15 - v2.1.3 - cascata de fallback para SMBIOS Ver e
+#                        Tag atual em coletar_dados_ambiente_remoto:
+#                        SMBIOS tenta dmidecode (grep mais especifico
+#                        "SMBIOS.*present"), depois dmidecode -t 0 e
+#                        por fim indicativo via bios_version. Tag atual
+#                        tenta dmidecode -s chassis-asset-tag e faz
+#                        fallback para sysfs chassis_asset_tag (sem
+#                        sudo, compativel com Legacy BIOS como
+#                        Gigabyte H81M e PERTOSA GA-H81M).
+# REVISION: 2026-06-15 - v2.1.1 - adiciona captura de MACs de todas as
 #                        interfaces de rede ativas (excluindo lo e
 #                        interfaces virtuais) via /sys/class/net. Log
 #                        INFO "MAC : ..." adicionado ao bloco de
@@ -307,9 +316,37 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
     )
 
     import re as _re
-    smbios_raw = _ssh_sudo("dmidecode 2>/dev/null | grep -i SMBIOS | head -3")
-    m = _re.search(r"(\d+\.\d+\.?\d*)", smbios_raw)
-    dados["smbios_version"] = m.group(1) if m else "DESCONHECIDO"
+
+    # SMBIOS version -- cascata de 3 tentativas para compatibilidade
+    # com equipamentos antigos (Legacy BIOS, pre-UEFI):
+    #   1. dmidecode completo filtrando linhas de ruido (funciona nos Daten)
+    #   2. dmidecode -t 0 (type 0 = BIOS info, menos verboso, evita ruido)
+    #   3. /sys/class/dmi/id/bios_version como indicativo de versao BIOS
+    #      (nao e exatamente a versao SMBIOS mas e o melhor fallback
+    #      disponivel em equipamentos sem suporte a dmidecode moderno)
+    dados["smbios_version"] = "DESCONHECIDO"
+
+    # Tentativa 1: dmidecode completo (ruido ja filtrado por _ssh_sudo)
+    smbios_raw = _ssh_sudo("dmidecode 2>/dev/null | grep -i 'SMBIOS.*present' | head -3")
+    m = _re.search(r"(\d+\.\d+\.?\d*)", smbios_raw) if smbios_raw != "DESCONHECIDO" else None
+    if m:
+        dados["smbios_version"] = m.group(1)
+    else:
+        # Tentativa 2: dmidecode type 0 (BIOS), mais especifico
+        smbios_t0 = _ssh_sudo("dmidecode -t 0 2>/dev/null | grep -i 'SMBIOS' | head -3")
+        m2 = _re.search(r"(\d+\.\d+\.?\d*)", smbios_t0) if smbios_t0 != "DESCONHECIDO" else None
+        if m2:
+            dados["smbios_version"] = m2.group(1)
+            _log("DEBUG", "SMBIOS Ver (via dmidecode -t 0): {}".format(dados["smbios_version"]))
+        else:
+            # Tentativa 3: sysfs -- /sys/firmware/dmi/tables/DMI nao e legivel
+            # diretamente, mas /sys/class/dmi/id/ tem bios_version como indicativo
+            smbios_sys = _ssh("cat /sys/class/dmi/id/product_version 2>/dev/null")
+            if smbios_sys and smbios_sys != "DESCONHECIDO" and smbios_sys.strip() not in ("", "None", "To Be Filled By O.E.M."):
+                dados["smbios_version"] = "N/D (BIOS: {})".format(dados.get("bios_version", "?"))
+                _log("DEBUG", "SMBIOS Ver: dmidecode sem retorno util; usando indicativo de BIOS.")
+            else:
+                _log("DEBUG", "SMBIOS Ver: nao foi possivel determinar por nenhum metodo.")
 
     # WSMT via dmesg com sudo
     wsmt_raw = _ssh_sudo("dmesg | grep -i wsmt | head -3")
@@ -320,8 +357,23 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
         dados["wsmt"]         = "Ausente"
         dados["wsmt_detalhe"] = ""
 
-    # Asset tag atual via dmidecode com sudo
-    dados["tag_atual"] = _ssh_sudo("dmidecode -s chassis-asset-tag")
+    # Asset tag atual -- cascata de 2 tentativas:
+    #   1. dmidecode -s chassis-asset-tag com sudo (precisa de privilegio,
+    #      funciona em todos os modelos com dmidecode moderno)
+    #   2. /sys/class/dmi/id/chassis_asset_tag via sysfs (sem sudo,
+    #      funciona em equipamentos Legacy BIOS sem suporte a dmidecode
+    #      moderno -- ex: Gigabyte H81M, PERTOSA GA-H81M)
+    tag_dmidecode = _ssh_sudo("dmidecode -s chassis-asset-tag")
+    if tag_dmidecode and tag_dmidecode != "DESCONHECIDO":
+        dados["tag_atual"] = tag_dmidecode
+    else:
+        tag_sysfs = _ssh("cat /sys/class/dmi/id/chassis_asset_tag 2>/dev/null")
+        if tag_sysfs and tag_sysfs != "DESCONHECIDO" and tag_sysfs.strip() not in ("", "None", "Not Specified", "To Be Filled By O.E.M."):
+            dados["tag_atual"] = tag_sysfs.strip()
+            _log("DEBUG", "Tag atual (via sysfs chassis_asset_tag): {}".format(dados["tag_atual"]))
+        else:
+            dados["tag_atual"] = "DESCONHECIDO"
+            _log("DEBUG", "Tag atual: nao foi possivel determinar via dmidecode nem sysfs.")
 
     # UEFI
     efi_check = _ssh("ls /sys/firmware/efi/efivars/ 2>/dev/null | head -1")

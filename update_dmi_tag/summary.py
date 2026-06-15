@@ -6,52 +6,92 @@
 #
 # DESCRIPTION: Geracao da tabela de resumo final (monta_tabela_resumo):
 #              tabela detalhada (1 linha por host, com colunas IP,
-#              Hostname, Placa normalizada, BIOS, SMBIOS, WSMT, tags,
-#              BEM conf/usado, Resultado, BBconfig e Backup) e sumario
-#              agregado (agrupado por BIOS + flag -w + Resultado, com
-#              contagem e descricao em linguagem natural via
-#              _descricao_resultado). _normaliza_fabricante reduz nomes
-#              verbosos de fabricante (ex: "Daten Tecnologia Ltda" ->
-#              "Daten") para liberar espaco na tabela.
+#              Hostname, Fabricante, Modelo, Fab.BIOS, Versao BIOS,
+#              SMBIOS, WSMT, tags, BEM conf/usado, Resultado, BBconfig
+#              e MAC) e sumario agregado (agrupado por Versao BIOS +
+#              flag -w + Resultado).
 #
-# AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.1.3
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
+# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
-# REVISION: 2026-06-15 - v2.1.2 - adiciona captura de MACs de todas as
-#                        interfaces de rede ativas (excluindo lo e
-#                        interfaces virtuais) via /sys/class/net. Log
-#                        INFO "MAC : ..." adicionado ao bloco de
-#                        auditoria de ambiente. Coluna MAC adicionada
-#                        no final da tabela detalhada de resumo.
-#                        modularizacao em pacote. Conteudo identico,
-#                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-15 - v2.1.1 - adiciona coluna MAC.
+# REVISION: 2026-06-15 - v2.1.2 - remove coluna Backup; BBconfig exibe
+#                        DRY-RUN; corrige coluna fantasma no sumario.
+# REVISION: 2026-06-15 - v2.1.3 - tabela detalhada separada em colunas
+#                        Fabricante (board_vendor) e Modelo (board_name)
+#                        no lugar da coluna Placa concatenada; adiciona
+#                        colunas Fab.BIOS (bios_vendor normalizado) e
+#                        Versao BIOS (bios_version); adiciona funcao
+#                        _normaliza_bios_vendor para abreviar fabricantes
+#                        BIOS conhecidos mantendo valores desconhecidos
+#                        intactos.
 #
 # =======================================================================
 
 import sys
 
 
-def _normaliza_fabricante(board):
+def _normaliza_fabricante(board_vendor):
     """
     NAME: _normaliza_fabricante
-    DESCRIPTION: Normaliza nomes de fabricante/placa verbosos para
-                 liberar espaco na tabela detalhada, sem perder a
-                 informacao relevante (a BIOS Info tem coluna propria).
-                 Atualmente normaliza apenas o caso observado:
-                   "Daten Tecnologia Ltda DH..." -> "Daten DH..."
+    DESCRIPTION: Normaliza nomes de fabricante de placa-mae verbosos
+                 para liberar espaco na tabela detalhada. Apenas o
+                 caso observado no parque:
+                   "Daten Tecnologia Ltda" -> "Daten"
+                   "Gigabyte Technology Co., Ltd." -> "Gigabyte"
+                   "Positivo Tecnologia" -> "Positivo"
                  Demais fabricantes permanecem inalterados.
-    PARAMETER: board - string "fabricante modelo" (registro["board"])
-    RETURNS: str -- board normalizado
+    PARAMETER: board_vendor - string do fabricante (registro["board_vendor"])
+    RETURNS: str -- fabricante normalizado
     """
-    if not board:
-        return board
-    prefixo = "Daten Tecnologia Ltda"
-    if board.startswith(prefixo):
-        return "Daten" + board[len(prefixo):]
-    return board
+    if not board_vendor:
+        return board_vendor
+    mapeamentos = (
+        ("Daten Tecnologia Ltda", "Daten"),
+        ("Gigabyte Technology Co., Ltd.", "Gigabyte"),
+        ("Positivo Tecnologia", "Positivo"),
+        ("PERTOSA", "PERTOSA"),
+    )
+    for origem, destino in mapeamentos:
+        if board_vendor.startswith(origem):
+            return destino
+    return board_vendor
+
+
+def _normaliza_bios_vendor(bios_vendor):
+    """
+    NAME: _normaliza_bios_vendor
+    DESCRIPTION: Abrevia nomes de fabricante de BIOS conhecidos para
+                 exibicao na coluna Fab.BIOS da tabela detalhada.
+                 Fabricantes conhecidos sao mapeados para abreviatura.
+                 Valores desconhecidos aparecem truncados como vieram
+                 (sem perder informacao inesperadamente).
+    PARAMETER: bios_vendor - string do fabricante da BIOS
+                             (registro["bios_vendor"])
+    RETURNS: str -- fabricante abreviado ou primeiros 10 chars se
+             desconhecido
+    """
+    if not bios_vendor or bios_vendor == "N/D":
+        return bios_vendor
+    mapeamentos = (
+        ("American Megatrends", "AMI"),
+        ("Phoenix Technologies", "Phoenix"),
+        ("Award Software", "Award"),
+        ("Insyde Software", "Insyde"),
+        ("Positivo", "Positivo"),
+        ("Hewlett-Packard", "HP"),
+        ("Dell Inc.", "Dell"),
+        ("Lenovo", "Lenovo"),
+    )
+    for origem, destino in mapeamentos:
+        if bios_vendor.startswith(origem):
+            return destino
+    # Valor desconhecido: retorna os primeiros 10 chars para nao truncar
+    # silenciosamente sem aviso, mas caber na coluna
+    return bios_vendor[:10]
 
 
 # Mapeamento de resultado/status para descricao em linguagem natural,
@@ -143,22 +183,25 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # 1. TABELA DETALHADA
     # =====================================================================
     C = {
-        "ip":              15,
-        "hostname":        13,
-        "board":           17,
-        "bios":            12,
-        "smbios":           7,
-        "wsmt":             7,
-        "tag_antes":       15,
-        "bem_conf":        14,
-        "bem_usado":       14,
-        "tag_depois":      15,
-        "resultado":       13,
-        "bbconfig_sync":   17,
-        "mac":             52,
+        "ip":           15,
+        "hostname":     13,
+        "board_vendor": 10,
+        "board_name":   20,
+        "bios_vendor":   8,
+        "bios_version": 14,
+        "smbios":        7,
+        "wsmt":          7,
+        "tag_antes":    15,
+        "bem_conf":     14,
+        "bem_usado":    14,
+        "tag_depois":   15,
+        "resultado":    13,
+        "bbconfig_sync":17,
+        "mac":          52,
     }
     CABECALHOS = [
-        "IP", "Hostname", "Placa", "BIOS", "SMBIOS", "WSMT",
+        "IP", "Hostname", "Fabricante", "Modelo",
+        "Fab.BIOS", "Versao BIOS", "SMBIOS", "WSMT",
         "Tag Antes", "BEM conf", "BEM usado", "Tag Depois",
         "Resultado", "BBconfig", "MAC",
     ]
@@ -177,9 +220,11 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
 
     for r in registros:
         linha_valores = dict(r)
-        linha_valores["board"] = _normaliza_fabricante(r.get("board", "N/D"))
-        # bbconfig_sync: substitui N/A por DRY-RUN quando o resultado
-        # do host for DRY-RUN, tornando o motivo do N/A explicito.
+        linha_valores["board_vendor"] = _normaliza_fabricante(
+            r.get("board_vendor", "N/D"))
+        linha_valores["bios_vendor"]  = _normaliza_bios_vendor(
+            r.get("bios_vendor", "N/D"))
+        # bbconfig_sync: substitui N/A por DRY-RUN quando resultado for DRY-RUN
         if (str(r.get("resultado", "")) == "DRY-RUN"
                 and linha_valores.get("bbconfig_sync") == "N/A"):
             linha_valores["bbconfig_sync"] = "DRY-RUN"
@@ -198,7 +243,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     grupos = {}
     flag_w = "-w" if write_ativo else ""
     for r in registros:
-        bios = r.get("bios", "N/D") or "N/D"
+        bios = r.get("bios_version", "N/D") or "N/D"
         resultado = r.get("resultado", "N/D") or "N/D"
         chave = (bios, flag_w, resultado)
         grupos[chave] = grupos.get(chave, 0) + 1
