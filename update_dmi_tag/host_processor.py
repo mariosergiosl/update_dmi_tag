@@ -13,20 +13,19 @@
 #              reinstall-enable/reboot quando a gravacao retornou OK.
 #              Retorna um dict consumido por summary.monta_tabela_resumo.
 #
-# AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.1.3
 # CREATED: 2026-06-12
-# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
+# REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
-# REVISION: 2026-06-15 - v2.1.2 - adiciona captura de MACs de todas as
-#                        interfaces de rede ativas (excluindo lo e
-#                        interfaces virtuais) via /sys/class/net. Log
-#                        INFO "MAC : ..." adicionado ao bloco de
-#                        auditoria de ambiente. Coluna MAC adicionada
-#                        no final da tabela detalhada de resumo.
-#                        modularizacao em pacote. Conteudo identico,
-#                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-15 - v2.1.1 - adiciona campo mac ao registro.
+# REVISION: 2026-06-15 - v2.1.3 - registro separado em board_vendor,
+#                        board_name, bios_vendor e bios_version (antes
+#                        concatenados em "board" e "bios"). Permite
+#                        exibir Fabricante e Modelo da placa e da BIOS
+#                        em colunas independentes na tabela de resumo,
+#                        eliminando o truncamento que perdia informacao.
 #
 # =======================================================================
 
@@ -68,18 +67,20 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
 
     # Estrutura de retorno com valores default
     registro = {
-        "ip":           ip,
-        "hostname":     "N/D",
-        "board":        "N/D",
-        "bios":         "N/D",
-        "smbios":       "N/D",
-        "wsmt":         "N/D",
-        "tag_antes":    "N/D",
-        "bem_conf":     "N/D",
-        "bem_usado":    "N/D",
-        "tag_depois":   "N/D",
-        "mecanismo":    "N/D",
-        "resultado":    "INACESSIVEL",
+        "ip":              ip,
+        "hostname":        "N/D",
+        "board_vendor":    "N/D",
+        "board_name":      "N/D",
+        "bios_vendor":     "N/D",
+        "bios_version":    "N/D",
+        "smbios":          "N/D",
+        "wsmt":            "N/D",
+        "tag_antes":       "N/D",
+        "bem_conf":        "N/D",
+        "bem_usado":       "N/D",
+        "tag_depois":      "N/D",
+        "mecanismo":       "N/D",
+        "resultado":       "INACESSIVEL",
         "bbconfig_sync":   "N/A",
         "bbconfig_backup": "",
         "mac":             "N/D",
@@ -124,14 +125,15 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
         caminho_log_remoto, caminho_log_local,
         args.verbose, args.csv,
     )
-    registro["hostname"]  = dados_amb.get("hostname",    "N/D")
-    registro["board"]     = "{} {}".format(
-        dados_amb.get("board_vendor", ""), dados_amb.get("board_name", "")).strip()
-    registro["bios"]      = dados_amb.get("bios_version", "N/D")
-    registro["smbios"]    = dados_amb.get("smbios_version", "N/D")
-    registro["wsmt"]      = dados_amb.get("wsmt",          "N/D")
-    registro["tag_antes"] = dados_amb.get("tag_atual",     "N/D")
-    registro["mac"]       = dados_amb.get("mac",           "N/D")
+    registro["hostname"]     = dados_amb.get("hostname",      "N/D")
+    registro["board_vendor"] = dados_amb.get("board_vendor",  "N/D")
+    registro["board_name"]   = dados_amb.get("board_name",    "N/D")
+    registro["bios_vendor"]  = dados_amb.get("bios_vendor",   "N/D")
+    registro["bios_version"] = dados_amb.get("bios_version",  "N/D")
+    registro["smbios"]       = dados_amb.get("smbios_version","N/D")
+    registro["wsmt"]         = dados_amb.get("wsmt",          "N/D")
+    registro["tag_antes"]    = dados_amb.get("tag_atual",     "N/D")
+    registro["mac"]          = dados_amb.get("mac",           "N/D")
 
     # 4. Verifica dependencias RPM remotas
     for pkg in ("python3-patrimonial", args.module_package,
