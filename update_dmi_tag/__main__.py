@@ -30,7 +30,7 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.5
+# VERSION: 2.1.7
 # CREATED: 2026-05-29
 # REVISION: 2026-06-15 - v2.1.4 - adiciona argumento --test-write.
 # REVISION: 2026-06-15 - v2.1.5 - loga a linha de comando completa
