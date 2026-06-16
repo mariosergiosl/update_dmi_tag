@@ -13,7 +13,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.5
+# VERSION: 2.1.6
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -22,11 +22,14 @@
 #                        DRY-RUN; corrige coluna fantasma no sumario.
 # REVISION: 2026-06-15 - v2.1.3 - colunas Fabricante, Modelo, Fab.BIOS
 #                        e Versao BIOS separadas.
-# REVISION: 2026-06-15 - v2.1.4 - adiciona coluna Teste Escrita entre
-#                        Resultado e BBconfig, exibindo o resultado do
-#                        rewrite no-op quando --test-write esta ativo
-#                        (OK-amidelnx, OK-amibios, FALHOU-todos,
-#                        TAG-VIRGEM, TAG-DESCONH ou N/A).
+# REVISION: 2026-06-15 - v2.1.4 - adiciona coluna Teste Escrita.
+# REVISION: 2026-06-15 - v2.1.5 - adiciona SEM-SUDO a _DESCRICOES_RESULTADO.
+# REVISION: 2026-06-16 - v2.1.6 - substitui bloco de contadores por
+#                        linhas individuais explicitas para cada status
+#                        (OK-amidelnx, OK-amibios, DRY-RUN, FALHOU,
+#                        SEM-SUDO, PENDENTE, INVALIDO, INACESSIVEL).
+#                        Todas as linhas sempre exibidas mesmo com valor
+#                        zero: explicito e melhor que implicito.
 #
 # =======================================================================
 
@@ -280,18 +283,52 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     _escreve(div_s)
     _escreve("")
 
-    # Contadores globais por prefixo do resultado (mantidos por
-    # compatibilidade com versoes anteriores do log)
-    ok     = sum(1 for r in registros if str(r.get("resultado","")).startswith("OK"))
-    dryrun = sum(1 for r in registros if r.get("resultado") == "DRY-RUN")
-    falhou = sum(1 for r in registros if str(r.get("resultado","")).startswith("FALHOU"))
-    outros = len(registros) - ok - dryrun - falhou
+    # =====================================================================
+    # CONTADORES INDIVIDUAIS POR STATUS
+    # Todas as linhas sao sempre exibidas (mesmo com valor 0) para que o
+    # operador possa interpretar o resultado sem ambiguidade. Explicito
+    # e sempre melhor que implicito.
+    # =====================================================================
+    total = len(registros)
 
-    _escreve("  OK       : {}".format(ok))
-    _escreve("  DRY-RUN  : {}".format(dryrun))
-    _escreve("  FALHOU   : {}".format(falhou))
+    # Gravacoes bem-sucedidas (qualquer mecanismo)
+    ok_amidelnx = sum(1 for r in registros if r.get("resultado") == "OK-amidelnx")
+    ok_amibios  = sum(1 for r in registros if r.get("resultado") == "OK-amibios")
+    ok_total    = ok_amidelnx + ok_amibios
+
+    # Simulacao sem gravacao
+    dryrun = sum(1 for r in registros if r.get("resultado") == "DRY-RUN")
+
+    # Falha na cascata de mecanismos (escrita foi tentada e rejeitada pela BIOS)
+    falhou = sum(1 for r in registros if str(r.get("resultado","")).startswith("FALHOU"))
+
+    # Sem privilegio sudo (escrita nao foi tentada)
+    sem_sudo = sum(1 for r in registros if r.get("resultado") == "SEM-SUDO")
+
+    # BEM_NUMERO ausente no arquivo de configuracao
+    pendente = sum(1 for r in registros if r.get("resultado") == "PENDENTE")
+
+    # BEM_NUMERO com formato invalido
+    invalido = sum(1 for r in registros if r.get("resultado") == "INVALIDO")
+
+    # Host inacessivel via SSH
+    inacessivel = sum(1 for r in registros if r.get("resultado") == "INACESSIVEL")
+
+    # Qualquer outro status nao mapeado acima
+    outros = total - ok_total - dryrun - falhou - sem_sudo - pendente - invalido - inacessivel
+
+    _escreve("  Gravacao OK (amidelnx_64)  : {:3d}  -- escrita confirmada via Mecanismo 1".format(ok_amidelnx))
+    _escreve("  Gravacao OK (amibios_dmi)  : {:3d}  -- escrita confirmada via Mecanismo 2 (fallback)".format(ok_amibios))
+    _escreve("  Simulacao (DRY-RUN)        : {:3d}  -- apenas leitura, nenhuma gravacao executada".format(dryrun))
+    _escreve("  Falha na escrita (FALHOU)  : {:3d}  -- cascata tentada, BIOS rejeitou ambos os mecanismos".format(falhou))
+    _escreve("  Sem privilegio (SEM-SUDO)  : {:3d}  -- usuario sem sudo ou --sudo-pass incorreto/ausente".format(sem_sudo))
+    _escreve("  BEM pendente (PENDENTE)    : {:3d}  -- BEM_NUMERO ausente no BBconfig.conf do host".format(pendente))
+    _escreve("  BEM invalido (INVALIDO)    : {:3d}  -- BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)".format(invalido))
+    _escreve("  Inacessivel (INACESSIVEL)  : {:3d}  -- host nao respondeu via SSH (desligado, rede, bootstrap)".format(inacessivel))
     if outros > 0:
-        _escreve("  OUTROS   : {} (PENDENTE/INACESSIVEL/INVALIDO)".format(outros))
+        _escreve("  Outros (status desconhecido): {:3d}  -- status nao mapeado acima".format(outros))
+    _escreve("  " + "-" * 60)
+    _escreve("  Total processado           : {:3d}".format(total))
     _escreve("")
 
 
