@@ -37,7 +37,7 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
 #
-# VERSION: 2.1.2
+# VERSION: 2.1.7
 #
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
