@@ -15,7 +15,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.5
+# VERSION: 2.1.6
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -299,9 +299,18 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
             ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
             "[TEST-WRITE] Iniciando validacao de capacidade de gravacao...",
             caminho_log_local, args.verbose, args.csv)
+        # Quando --write foi bem-sucedido, a BIOS ja tem o novo valor
+        # (tag_depois). O rewrite no-op deve usar esse valor para nao
+        # desfazer a gravacao que acabou de ser feita.
+        # Em DRY-RUN ou falha, usa tag_antes (valor ainda na BIOS).
+        tag_para_teste = (
+            registro["tag_depois"]
+            if str(resultado_escrita).startswith("OK")
+            else registro["tag_antes"]
+        )
         registro["teste_escrita"] = tenta_teste_escrita_remoto(
             ip, ssh_user, sudo_cmd,
-            registro["tag_antes"],
+            tag_para_teste,
             args, caminho_log_remoto, caminho_log_local,
         )
         gravar_log_remoto(
