@@ -15,7 +15,7 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.2
+# VERSION: 2.1.6
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -29,7 +29,7 @@ import time
 
 from .constants import PatrimonioPendenteError, _detecta_usuario_sessao
 from .logging_utils import gravar_log, gravar_log_remoto
-from .ssh_utils import ssh_run
+from .ssh_utils import ssh_run, _filtra_banner
 
 
 def le_valor_configuracao(caminho_config, nome_var, caminho_log, verbose,
@@ -222,10 +222,11 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
         ip, ssh_user,
         "{} cp -p {} {}".format(sudo_cmd, caminho_config, backup_path),
         timeout=15)
+    err_cp_limpo = _filtra_banner(err_cp or "").strip()
     if rc_cp != 0:
         _log("ERROR",
              "Falha ao criar backup de {} em {}: {}".format(
-                 caminho_config, backup_path, (err_cp or "").strip()))
+                 caminho_config, backup_path, err_cp_limpo or "sem detalhe"))
         return {"sincronizado": False, "backup": None, "motivo": "FALHOU-backup"}
 
     _log("INFO", "Backup de {} criado: {}".format(caminho_config, backup_path))
@@ -239,7 +240,25 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
     if not chattr_ok:
         _log("WARNING",
              "chattr +i falhou em {} (sistema de arquivos pode nao suportar): {}".format(
-                 backup_path, (err_chattr or "").strip()))
+                 backup_path, _filtra_banner(err_chattr or "").strip()))
+
+    # 5.5 Verifica se o arquivo original tem chattr +i e remove antes de editar.
+    # Em alguns hosts o BBconfig.conf e marcado como imutavel por automacoes
+    # anteriores (ex: Puppet, BigFix). O sed -i falha silenciosamente com
+    # "nao foi possivel renomear /etc/sedXXXX" se o arquivo for imutavel.
+    rc_lsattr, out_lsattr, _ = ssh_run(
+        ip, ssh_user,
+        "lsattr {} 2>/dev/null | head -1".format(caminho_config),
+        timeout=10)
+    original_imutavel = (rc_lsattr == 0 and "i" in out_lsattr.split()[0]
+                         if out_lsattr.strip() else False)
+    if original_imutavel:
+        _log("WARNING",
+             "BBconfig.conf tem chattr +i (imutavel). Removendo temporariamente "
+             "para sincronizacao.")
+        ssh_run(ip, ssh_user,
+                "{} chattr -i {}".format(sudo_cmd, caminho_config),
+                timeout=10)
 
     # 6. Edita o arquivo original via sed -i
     # Usa aspas simples no shell remoto; nome_var e bem_usado sao
@@ -249,11 +268,19 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
         ip, ssh_user,
         "{} sed -i '{}' {}".format(sudo_cmd, sed_expr, caminho_config),
         timeout=15)
+    err_sed_limpo = _filtra_banner(err_sed or "").strip()
+
+    # Se o arquivo era imutavel, restaura o atributo independente do resultado
+    if original_imutavel:
+        ssh_run(ip, ssh_user,
+                "{} chattr +i {}".format(sudo_cmd, caminho_config),
+                timeout=10)
+        _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
 
     if rc_sed != 0:
         _log("ERROR",
              "sed -i falhou em {}: {}. Tentando rollback a partir do backup.".format(
-                 caminho_config, (err_sed or "").strip()))
+                 caminho_config, err_sed_limpo or "sem detalhe"))
         return _rollback_bbconfig(
             ip, ssh_user, sudo_cmd, caminho_config, backup_path,
             chattr_ok, "FALHOU-sed", _log)
@@ -321,7 +348,9 @@ def _rollback_bbconfig(ip, ssh_user, sudo_cmd, caminho_config, backup_path,
     _log("ERROR",
          "Rollback de {} FALHOU: {}. Arquivo pode estar em estado "
          "inconsistente. Backup preservado em {}.".format(
-             caminho_config, (err_restore or "").strip(), backup_path))
+             caminho_config,
+             _filtra_banner(err_restore or "").strip() or "sem detalhe",
+             backup_path))
     return {"sincronizado": False, "backup": backup_path,
             "motivo": "{}-rollback-falhou".format(motivo_base)}
 
