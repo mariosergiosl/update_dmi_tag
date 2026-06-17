@@ -17,20 +17,19 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.7
+# VERSION: 2.1.8
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
-# REVISION: 2026-06-15 - v2.1.4 - adiciona tenta_teste_escrita_remoto:
-#                        cascata de mecanismos no modo rewrite no-op
-#                        (regrava o valor atual da BIOS). Usado pela
-#                        flag --test-write para validar compatibilidade
-#                        de gravacao sem alterar nenhum dado. Pula hosts
-#                        com tag virgem (Default String etc.) ou tag
-#                        DESCONHECIDA. Retorna string descritiva:
-#                        OK-amidelnx, OK-amibios, FALHOU-todos,
-#                        TAG-VIRGEM ou TAG-DESCONH.
+# REVISION: 2026-06-15 - v2.1.4 - adiciona tenta_teste_escrita_remoto.
+# REVISION: 2026-06-16 - v2.1.8 - TAG-VIRGEM no test-write: em vez de
+#                        pular, usa bem_usado (se disponivel) ou "O.E.M."
+#                        como valor de teste, grava, verifica e restaura
+#                        o valor virgem original. Refatorado em funcao
+#                        interna _executa_cascata para evitar duplicacao.
+#                        Assinatura de tenta_teste_escrita_remoto recebe
+#                        bem_usado como parametro opcional.
 #
 # =======================================================================
 
@@ -152,102 +151,118 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
 
 
 def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
-                                caminho_log_remoto, caminho_log_local):
+                                caminho_log_remoto, caminho_log_local,
+                                bem_usado=""):
     """
     NAME: tenta_teste_escrita_remoto
-    DESCRIPTION: Executa um rewrite no-op (regrava o valor ja presente
-                 na BIOS) para validar a capacidade de escrita do
-                 equipamento sem alterar nenhum dado. Ativado pela flag
-                 --test-write, independente de --write.
+    DESCRIPTION: Executa um rewrite no-op para validar a capacidade de
+                 escrita do equipamento sem alterar nenhum dado. Ativado
+                 pela flag --test-write, independente de --write.
 
                  Fluxo:
-                   1. Verifica se tag_atual e conhecida e nao virgem.
-                      Se DESCONHECIDA -> retorna TAG-DESCONH (pulado).
-                      Se virgem (Default String etc.) -> TAG-VIRGEM.
-                   2. Tenta Mecanismo 1 (amidelnx_64) com tag_atual.
-                      Sucesso -> retorna OK-amidelnx.
-                   3. Tenta Mecanismo 2 (amibios_dmi sysfs).
-                      Sucesso -> retorna OK-amibios.
-                   4. Ambos falharam -> retorna FALHOU-todos.
-
-                 Importante: esta funcao NUNCA executa em dry_run=True
-                 (o objetivo e confirmar a escrita real). Por isso e
-                 separada de tenta_escrever_tag_remoto e so e chamada
-                 quando args.test_write=True, independente de args.write.
-                 O BBconfig.conf NAO e atualizado por esta funcao.
+                   1. Se tag_atual DESCONHECIDA -> TAG-DESCONH (pulado).
+                   2. Se tag_atual virgem (Default String etc.):
+                      usa bem_usado como valor de teste se disponivel,
+                      ou "O.E.M." como fallback. Grava, verifica, e
+                      restaura o valor virgem original ao final.
+                      Retorna OK-* ou FALHOU-todos conforme resultado.
+                   3. Tag conhecida -> rewrite no-op direto.
+                   Cascata: Mecanismo 1 (amidelnx_64) -> Mecanismo 2
+                   (amibios_dmi). Para no primeiro sucesso.
+                   O BBconfig.conf NAO e atualizado por esta funcao.
 
     PARAMETER: ip                - endereco IP do host remoto
                ssh_user          - usuario SSH
                sudo_cmd          - prefixo sudo no host
-               tag_atual         - valor atual lido da BIOS (para
-                                   regravar identico)
+               tag_atual         - valor atual lido da BIOS
                args              - namespace do argparse
                caminho_log_remoto - log remoto do host
                caminho_log_local  - log consolidado local
+               bem_usado         - BEM_NUMERO calculado (14 digitos),
+                                   usado como valor de teste quando a
+                                   tag atual for virgem (opcional)
     RETURNS: str -- "OK-amidelnx", "OK-amibios", "FALHOU-todos",
-             "TAG-VIRGEM" ou "TAG-DESCONH"
+             "TAG-VIRGEM" (obsoleto, mantido para compatibilidade) ou
+             "TAG-DESCONH"
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
                           nivel, msg, caminho_log_local, args.verbose, args.csv)
 
-    # 1. Verifica se a tag atual e utilizavel como valor de teste
+    def _executa_cascata(tag_teste):
+        """Executa cascata Mec1->Mec2 com tag_teste. Retorna (resultado, sucesso)."""
+        _log("INFO", "[TEST-WRITE] --- Mecanismo 1: amidelnx_64 ---")
+        try:
+            sucesso = executa_amidelnx_remoto(
+                ip, ssh_user, sudo_cmd, tag_teste,
+                args.amide_remote_path, args.amide_local_path,
+                caminho_log_remoto, caminho_log_local,
+                args.verbose, args.csv, dry_run=False,
+                amide_repo_url=args.amide_repo_url,
+                amide_package=args.amide_package,
+            )
+            if sucesso:
+                _log("INFO",
+                     "[TEST-WRITE] Mecanismo 1 OK -- modelo compativel "
+                     "com amidelnx_64.")
+                return "OK-amidelnx", True
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 1 falhou; tentando Mecanismo 2.")
+        except MecanismoIndisponivelError as e:
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 1 indisponivel: {}".format(e))
+
+        _log("INFO", "[TEST-WRITE] --- Mecanismo 2: amibios_dmi (sysfs) ---")
+        try:
+            sucesso = executa_amibios_remoto(
+                ip, ssh_user, sudo_cmd, tag_teste,
+                args.target, caminho_log_remoto, caminho_log_local,
+                args.verbose, args.csv, dry_run=False,
+                module_repo_url=args.module_repo_url,
+                module_package=args.module_package,
+            )
+            if sucesso:
+                _log("INFO",
+                     "[TEST-WRITE] Mecanismo 2 OK -- modelo compativel "
+                     "via amibios_dmi.")
+                return "OK-amibios", True
+            _log("ERROR", "[TEST-WRITE] Mecanismo 2 tambem falhou.")
+        except MecanismoIndisponivelError as e:
+            _log("ERROR",
+                 "[TEST-WRITE] Mecanismo 2 indisponivel: {}".format(e))
+
+        _log("ERROR",
+             "[TEST-WRITE] Ambos os mecanismos falharam -- modelo "
+             "incompativel ou binario ausente.")
+        return "FALHOU-todos", False
+
+    # 1. Tag DESCONHECIDA -- nao ha valor para testar
     if not tag_atual or tag_atual == "DESCONHECIDO":
         _log("WARNING",
              "[TEST-WRITE] Tag atual DESCONHECIDA -- teste de escrita pulado.")
         return "TAG-DESCONH"
 
+    # 2. Tag VIRGEM -- usa BEM_NUMERO ou "O.E.M." como valor de teste
     if tag_atual.strip() in _TAGS_VIRGEM:
-        _log("WARNING",
-             "[TEST-WRITE] Tag virgem ('{}') -- teste de escrita pulado "
-             "(regravar placeholder nao valida compatibilidade).".format(tag_atual))
-        return "TAG-VIRGEM"
+        tag_teste  = bem_usado.strip() if bem_usado and bem_usado.strip() else "O.E.M."
+        tag_restore = tag_atual.strip()
+        _log("INFO",
+             "[TEST-WRITE] Tag virgem ('{}') -- testando com '{}' "
+             "e restaurando ao final.".format(tag_restore, tag_teste))
+        resultado, gravou = _executa_cascata(tag_teste)
+        if gravou:
+            # Restaura o valor virgem original
+            _log("INFO",
+                 "[TEST-WRITE] Restaurando tag virgem original: "
+                 "'{}'".format(tag_restore if tag_restore else "vazio"))
+            tag_restaurar = tag_restore if tag_restore else "O.E.M."
+            _executa_cascata(tag_restaurar)
+        return resultado
 
+    # 3. Tag conhecida -- rewrite no-op direto
     _log("INFO",
-         "[TEST-WRITE] Iniciando rewrite no-op com tag atual: '{}'".format(tag_atual))
-
-    # 2. Mecanismo 1: amidelnx_64 (dry_run=False -- escrita real no-op)
-    _log("INFO", "[TEST-WRITE] --- Mecanismo 1: amidelnx_64 ---")
-    try:
-        sucesso = executa_amidelnx_remoto(
-            ip, ssh_user, sudo_cmd, tag_atual,
-            args.amide_remote_path, args.amide_local_path,
-            caminho_log_remoto, caminho_log_local,
-            args.verbose, args.csv, dry_run=False,
-            amide_repo_url=args.amide_repo_url,
-            amide_package=args.amide_package,
-        )
-        if sucesso:
-            _log("INFO",
-                 "[TEST-WRITE] Mecanismo 1 OK -- modelo compativel com amidelnx_64.")
-            return "OK-amidelnx"
-        _log("WARNING",
-             "[TEST-WRITE] Mecanismo 1 falhou; tentando Mecanismo 2.")
-    except MecanismoIndisponivelError as e:
-        _log("WARNING",
-             "[TEST-WRITE] Mecanismo 1 indisponivel: {}".format(e))
-
-    # 3. Mecanismo 2: amibios_dmi via sysfs (dry_run=False)
-    _log("INFO", "[TEST-WRITE] --- Mecanismo 2: amibios_dmi (sysfs) ---")
-    try:
-        sucesso = executa_amibios_remoto(
-            ip, ssh_user, sudo_cmd, tag_atual,
-            args.target, caminho_log_remoto, caminho_log_local,
-            args.verbose, args.csv, dry_run=False,
-            module_repo_url=args.module_repo_url,
-            module_package=args.module_package,
-        )
-        if sucesso:
-            _log("INFO",
-                 "[TEST-WRITE] Mecanismo 2 OK -- modelo compativel via amibios_dmi.")
-            return "OK-amibios"
-        _log("ERROR", "[TEST-WRITE] Mecanismo 2 tambem falhou.")
-    except MecanismoIndisponivelError as e:
-        _log("ERROR",
-             "[TEST-WRITE] Mecanismo 2 indisponivel: {}".format(e))
-
-    _log("ERROR",
-         "[TEST-WRITE] Ambos os mecanismos falharam -- modelo incompativel "
-         "ou binario ausente.")
-    return "FALHOU-todos"
+         "[TEST-WRITE] Iniciando rewrite no-op com tag atual: "
+         "'{}'".format(tag_atual))
+    resultado, _ = _executa_cascata(tag_atual)
+    return resultado
 

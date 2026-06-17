@@ -15,7 +15,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.7
+# VERSION: 2.1.8
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -312,6 +312,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
             ip, ssh_user, sudo_cmd,
             tag_para_teste,
             args, caminho_log_remoto, caminho_log_local,
+            bem_usado=registro.get("bem_usado", ""),
         )
         gravar_log_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
