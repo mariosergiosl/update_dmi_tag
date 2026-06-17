@@ -59,8 +59,7 @@ class TodosMecanismosFalharam(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-
-SCRIPT_VERSION = "2.1.2"
+SCRIPT_VERSION = "2.1.8"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
