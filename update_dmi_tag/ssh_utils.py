@@ -16,7 +16,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.7
+# VERSION: 2.1.8
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,

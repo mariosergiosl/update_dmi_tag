@@ -15,11 +15,16 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.7
+# VERSION: 2.1.8
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-16 - v2.1.8 - aceita X/x como DV valido em BEM de
+#                        14 digitos (DV=10 no padrao patrimonial BB).
+#                        Registra WARNING quando DV lido difere do
+#                        calculado mas segue a gravacao. Tag preservada
+#                        com X maiusculo para gravacao na BIOS.
 #
 # =======================================================================
 
@@ -105,22 +110,32 @@ def valida_e_calcula_tag(valor_config, caminho_log, verbose, suprime_tela,
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
                    caminho_log_local)
 
-    if not (valor_config.isdigit() and len(valor_config) in (13, 14)):
-        _log("ERROR", "Formato invalido: '{}' (deve ter 13 ou 14 digitos)".format(
-            valor_config))
+    # Aceita valor de 14 chars com DV numerico OU "X"/"x" (DV=10 no
+    # padrao patrimonial BB). Valores de 13 chars devem ser todos numericos.
+    valor_upper = valor_config.upper()
+    tem_x_no_final = (len(valor_config) == 14
+                      and valor_upper.endswith("X")
+                      and valor_upper[:13].isdigit())
+    if not (
+        (valor_config.isdigit() and len(valor_config) in (13, 14))
+        or tem_x_no_final
+    ):
+        _log("ERROR", "Formato invalido: '{}' (deve ter 13 ou 14 digitos, "
+             "ou 13 digitos + X como DV)".format(valor_config))
         raise ValueError(
             "Valor lido possui tamanho invalido ({}): {}".format(
                 len(valor_config), valor_config))
 
     if len(valor_config) == 14:
-        base_13     = valor_config[:13]
-        dv_lido     = valor_config[13]
+        base_13      = valor_upper[:13]
+        dv_lido      = valor_upper[13]
         dv_calculado = calcula_dv_modulo11(base_13)
         if dv_lido != dv_calculado:
             _log("WARNING",
-                 "DV lido ({}) difere do calculado ({}) para base {}!".format(
+                 "DV lido ({}) difere do calculado ({}) para base {} "
+                 "(aceito conforme padrao BB).".format(
                      dv_lido, dv_calculado, base_13))
-        tag_esperada = valor_config
+        tag_esperada = valor_upper   # preserva X maiusculo para gravacao
         _log("INFO", "Valor ja possui 14 digitos. DV verificado: {}".format(
             dv_calculado))
     else:

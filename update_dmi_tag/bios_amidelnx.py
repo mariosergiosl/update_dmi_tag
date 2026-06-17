@@ -15,7 +15,7 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.7
+# VERSION: 2.1.8
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
@@ -184,17 +184,42 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
 
     _log("INFO", "Mecanismo 1: executando amidelnx_64 /ca {} em {}".format(tag, ip))
 
+    # Coleta diagnostico de carga e processo antes da execucao (sempre).
+    # Permite identificar equipamentos sob carga alta que causam timeout.
+    _, uptime_out, _   = ssh_run(ip, ssh_user, "uptime 2>/dev/null", timeout=10)
+    _, free_out, _     = ssh_run(ip, ssh_user, "free -m 2>/dev/null | head -2", timeout=10)
+    _, ps_antes, _     = ssh_run(
+        ip, ssh_user,
+        "ps aux 2>/dev/null | grep -i amidelnx | grep -v grep", timeout=10)
+    _log("DEBUG", "PRE-EXEC uptime  : {}".format(
+        _filtra_banner(uptime_out).strip() or "N/D"))
+    _log("DEBUG", "PRE-EXEC free -m : {}".format(
+        _filtra_banner(free_out).replace("\n", " | ").strip() or "N/D"))
+    if ps_antes.strip():
+        _log("DEBUG", "PRE-EXEC amidelnx ja em execucao: {}".format(
+            _filtra_banner(ps_antes).strip()))
+
     cmd_remoto = "{} {} /ca {}".format(sudo_cmd, caminho_amide_remoto, tag)
     rc, stdout, stderr = ssh_run(ip, ssh_user, cmd_remoto, timeout=30)
 
     # Remove o banner corporativo que pode vazar para stdout em alguns
     # servidores SSH (ex: Gigabyte/PERTOSA com SLES mais antigo).
-    # Sem este filtro, o banner empurra "Done" para baixo e o parser
-    # nao o encontra, resultando em FALHOU mesmo quando a gravacao OK.
     stdout = _filtra_banner(stdout)
     stderr = _filtra_banner(stderr)
 
     sucesso, detalhe = _parse_resultado_amide(stdout, stderr)
+
+    # Coleta diagnostico apos execucao (sempre), util para confirmar
+    # se o processo ficou preso em caso de timeout ou falha.
+    _, ps_depois, _ = ssh_run(
+        ip, ssh_user,
+        "ps aux 2>/dev/null | grep -i amidelnx | grep -v grep", timeout=10)
+    if ps_depois.strip():
+        _log("DEBUG", "POS-EXEC amidelnx ainda em execucao (possivel travamento): {}".format(
+            _filtra_banner(ps_depois).strip()))
+    else:
+        _log("DEBUG", "POS-EXEC amidelnx: processo encerrado (rc={}).".format(rc))
+
     if sucesso:
         _log("INFO", "amidelnx_64: gravacao confirmada -- {}".format(detalhe))
         return True
