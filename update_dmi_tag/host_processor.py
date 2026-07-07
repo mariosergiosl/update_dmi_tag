@@ -15,8 +15,21 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - tabela da Fase 1 (triagem) passa a usar
+#                        nivel INFO uniforme em todas as linhas (evita
+#                        desalinhamento causado por ERROR/WARNING terem
+#                        largura diferente de INFO no log bruto) e ganha uma
+#                        4a coluna "Observacao / Proxima Acao" com
+#                        explicacao humanizada de cada status (OFFLINE,
+#                        OK, PENDENTE, NEGADO) e se exige alguma acao do
+#                        operador. Larguras de coluna calculadas
+#                        dinamicamente a partir do maior conteudo.
+# REVISION: 2026-07-07 - v2.1.10 - textos de OBS_* encurtados (evitar quebra
+#                        de linha/desalinhamento em terminais mais estreitos,
+#                        detalhe como nome do arquivo de hosts_inacessiveis
+#                        removido do texto por ja sair em linha propria).
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 # REVISION: 2026-06-15 - v2.1.1 - adiciona campo mac ao registro.
@@ -27,12 +40,29 @@
 #                        tenta_teste_escrita_remoto quando --test-write
 #                        ativo, entre a leitura pos-escrita e a
 #                        sincronizacao do BBconfig.conf.
+# REVISION: 2026-07-06 - v2.1.9 - adiciona teste de conectividade tcp rapido
+#                        antes do bootstrap de autenticacao ssh.
+# REVISION: 2026-07-07 - v2.1.9 - triagem_hosts_remotos passa a retornar
+#                        tambem a lista (ip, bem_numero) dos hosts
+#                        descartados, para gravacao do arquivo de hosts
+#                        inacessiveis em __main__.py. Extrai construcao do
+#                        registro descartado para _registro_descartado
+#                        (elimina duplicacao do dict).
+# REVISION: 2026-07-07 - v2.1.9 - hosts_validos passa a carregar um 3o
+#                        elemento (chave_ok) por host, indicando que a Fase 1
+#                        ja confirmou porta 22 aberta e chave SSH autorizada.
+#                        processa_host_remoto recebe chave_ja_validada e pula
+#                        o retest quando True, eliminando round trips de rede
+#                        redundantes entre Fase 1 e Fase 2. Tambem remove o
+#                        testa_conexao_ssh residual apos prepara_autenticacao_ssh,
+#                        que ja garante a conexao por chave internamente antes
+#                        de retornar True.
 #
 # =======================================================================
 
 from .logging_utils import gravar_log, gravar_log_remoto
 from .ssh_bootstrap import prepara_autenticacao_ssh
-from .ssh_utils import ssh_run, testa_conexao_ssh, detecta_sudo
+from .ssh_utils import ssh_run, testa_conexao_ssh, detecta_sudo, testa_porta_ssh
 from .environment import coletar_dados_ambiente_remoto
 from .bbconfig import le_valor_configuracao_remoto, sincroniza_bbconfig_remoto
 from .patrimonio import (
@@ -41,7 +71,8 @@ from .patrimonio import (
 from .write_cascade import tenta_escrever_tag_remoto, tenta_teste_escrita_remoto
 
 
-def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
+def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
+                          chave_ja_validada=False):
     """
     NAME: processa_host_remoto
     DESCRIPTION: Executa o fluxo completo de auditoria e gravacao para
@@ -56,10 +87,16 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
                    8. Executa cascata de escrita
                    9. Executa acoes --production se solicitado
                  Retorna dicionario com todos os dados para a tabela de resumo.
-    PARAMETER: ip               - endereco IP do host remoto
-               bem_numero_lista - BEM_NUMERO da linha do arquivo (pode ser vazio)
-               args             - namespace do argparse
+    PARAMETER: ip                - endereco IP do host remoto
+               bem_numero_lista  - BEM_NUMERO da linha do arquivo (pode ser vazio)
+               args              - namespace do argparse
                caminho_log_local - log consolidado local
+               chave_ja_validada - se True, pula o retest de porta TCP 22 e
+                                    de chave SSH (ja confirmados na Fase 1 de
+                                    triagem_hosts_remotos), evitando round
+                                    trips de rede redundantes. Default False
+                                    preserva o comportamento antigo para
+                                    quem chamar esta funcao diretamente.
     RETURNS: dict -- dados do host para compor a linha do resumo
     """
     caminho_log_remoto = args.log_file
@@ -101,20 +138,30 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local):
     )
     _log("INFO", "====== Iniciando processamento do host {} ======".format(ip))
 
-    # 1.a Bootstrap de autenticacao SSH (gera/distribui chave se necessario).
-    # Caminho feliz (chave ja autorizada no host): nao executa nada,
-    # apenas retorna True silenciosamente. Em falha, marca INACESSIVEL.
-    if not prepara_autenticacao_ssh(
-        ip, ssh_user,
-        getattr(args, "ssh_pass_efetiva", ""),
-        caminho_log_local, args.verbose,
-    ):
-        _log("ERROR", "Host inacessivel via SSH (bootstrap de autenticacao falhou).")
-        return registro
+    if chave_ja_validada:
+        # Fase 1 (triagem_hosts_remotos) ja confirmou porta TCP 22 aberta e
+        # chave publica autorizada para este host: pula o retest, que so
+        # repetiria round trips de rede sem checar nada novo.
+        _log("DEBUG", "Conectividade e chave SSH ja validadas na triagem (Fase 1); pulando retest.")
+    else:
+        # 1.a Teste rapido de porta TCP 22 (evita timeouts demorados de hosts offline)
+        if not testa_porta_ssh(ip, timeout=2.0):
+            _log("ERROR", "Host offline ou porta SSH (TCP 22) fechada.")
+            registro["resultado"] = "INACESSIVEL"
+            return registro
 
-    if not testa_conexao_ssh(ip, ssh_user):
-        _log("ERROR", "Host inacessivel via SSH.")
-        return registro
+        # 1.b Bootstrap de autenticacao SSH (gera/distribui chave se necessario).
+        # Caminho feliz (chave ja autorizada no host): nao executa nada,
+        # apenas retorna True silenciosamente. Em falha, marca INACESSIVEL.
+        # prepara_autenticacao_ssh so retorna True apos confirmar a conexao
+        # por chave internamente; nao ha necessidade de retestar aqui.
+        if not prepara_autenticacao_ssh(
+            ip, ssh_user,
+            getattr(args, "ssh_pass_efetiva", ""),
+            caminho_log_local, args.verbose,
+        ):
+            _log("ERROR", "Host inacessivel via SSH (bootstrap de autenticacao falhou).")
+            return registro
 
     # 2. Detecta sudo
     # detecta_sudo retorna (prefixo, confirmado):
@@ -411,5 +458,143 @@ def _executa_acoes_production(ip, ssh_user, sudo_cmd, args,
     ssh_run(ip, ssh_user,
             "{} reboot".format(sudo_cmd), timeout=10)
     _log("INFO", "[PRODUCTION] Comando reboot enviado.")
+
+
+def _registro_descartado(ip):
+    """
+    NAME: _registro_descartado
+    DESCRIPTION: Monta o registro placeholder (campos "N/D"/"N/A") usado
+                 na tabela de resumo para um host descartado na triagem
+                 (Fase 1), seja por estar offline ou por acesso negado.
+    PARAMETER: ip - endereco IP do host descartado
+    RETURNS: dict -- registro no mesmo formato usado por processa_host_remoto
+    """
+    return {
+        "ip":              ip,
+        "hostname":        "N/D",
+        "board_vendor":    "N/D",
+        "board_name":      "N/D",
+        "bios_vendor":     "N/D",
+        "bios_version":    "N/D",
+        "smbios":          "N/D",
+        "wsmt":            "N/D",
+        "tag_antes":       "N/D",
+        "bem_conf":        "N/D",
+        "bem_usado":       "N/D",
+        "tag_depois":      "N/D",
+        "mecanismo":       "N/D",
+        "resultado":       "INACESSIVEL",
+        "bbconfig_sync":   "N/A",
+        "bbconfig_backup": "",
+        "mac":             "N/D",
+        "teste_escrita":   "N/A",
+    }
+
+
+def triagem_hosts_remotos(hosts, args, caminho_log_local):
+    """
+    NAME: triagem_hosts_remotos
+    DESCRIPTION: Fase 1: Realiza triagem rapida de todos os hosts remotos.
+                 Testa a conectividade via porta TCP 22 e validacao rapida de SSH.
+                 Exibe e grava o status consolidado de cada host no inicio da execucao
+                 (tabela vai para o log consolidado e, se --verbose, para a tela).
+                 Filtra a lista retornando apenas os hosts viaveis (online e autorizados).
+    PARAMETER: hosts             - lista de tuplas (ip, bem_numero)
+               args              - namespace do argparse
+               caminho_log_local - log consolidado local
+    RETURNS: tuple(list, list, list) -- (hosts_validos, registros_descartados,
+             hosts_descartados).
+             hosts_validos e uma lista de tuplas (ip, bem_numero, chave_ok):
+             chave_ok=True indica que a chave publica ja foi confirmada
+             autorizada aqui mesmo na Fase 1 (processa_host_remoto pode pular
+             o retest de porta/SSH); chave_ok=False indica "PENDENTE"
+             (chave ainda nao autorizada, mas ha senha para o bootstrap via
+             ssh-copy-id, que so acontece na Fase 2).
+             hosts_descartados e uma lista de tuplas (ip, bem_numero) no
+             mesmo formato de le_arquivo_hosts, para uso na gravacao do
+             arquivo de hosts inacessiveis.
+    """
+    ssh_user = args.ssh_user
+    ssh_pass = getattr(args, "ssh_pass_efetiva", "")
+
+    # Observacoes humanizadas por status -- curtas de proposito, para nao
+    # quebrar linha e desalinhar a tabela no terminal/log (o detalhe extra,
+    # como o nome do arquivo de hosts inacessiveis, ja sai logo depois em
+    # uma linha de log separada, nao precisa repetir aqui).
+    OBS_OFFLINE  = "Desligada ou sem rede -- nao sera processada agora."
+    OBS_OK       = "Nenhuma acao necessaria -- sera processada na Fase 2."
+    OBS_PENDENTE = "Sera processada; chave SSH autorizada via senha na Fase 2."
+    OBS_NEGADO   = "Sem chave/senha -- nao processada. Informe --ssh-pass."
+
+    # Larguras calculadas a partir do maior conteudo de cada coluna (cabecalho
+    # ou observacao), para a tabela nunca ficar desalinhada.
+    LARG_IP    = max(15, max((len(ip) for ip, _ in hosts), default=0))
+    LARG_CONEC = len("Conectividade")
+    LARG_SSH   = max(len("Acesso SSH"), len("NEGADO (Chave ausente/Sem senha)"))
+    LARG_OBS   = max(len("Observacao / Proxima Acao"),
+                      len(OBS_OFFLINE), len(OBS_OK),
+                      len(OBS_PENDENTE), len(OBS_NEGADO))
+
+    def _linha(ip_val, conec_val, ssh_val, obs_val):
+        return "| {} | {} | {} | {} |".format(
+            str(ip_val).ljust(LARG_IP), str(conec_val).ljust(LARG_CONEC),
+            str(ssh_val).ljust(LARG_SSH), str(obs_val).ljust(LARG_OBS))
+
+    divisor = "+-{}-+-{}-+-{}-+-{}-+".format(
+        "-" * LARG_IP, "-" * LARG_CONEC, "-" * LARG_SSH, "-" * LARG_OBS)
+
+    # Separador visual e cabecalho em formato de tabela. Tudo em nivel INFO
+    # (mesmo para OFFLINE/NEGADO): o proprio conteudo da linha ja identifica
+    # o problema, e manter um unico nivel evita desalinhamento no log bruto
+    # (ERROR/WARNING/INFO tem larguras diferentes antes do "-").
+    gravar_log(caminho_log_local, "INFO", "=" * 70, args.verbose, False)
+    gravar_log(caminho_log_local, "INFO", "=== FASE 1: TRIAGEM PRELIMINAR DE CONECTIVIDADE E ACESSO ===", args.verbose, False)
+    gravar_log(caminho_log_local, "INFO", divisor, args.verbose, False)
+    gravar_log(caminho_log_local, "INFO",
+               _linha("IP", "Conectividade", "Acesso SSH", "Observacao / Proxima Acao"),
+               args.verbose, False)
+    gravar_log(caminho_log_local, "INFO", divisor, args.verbose, False)
+
+    hosts_validos = []
+    registros_descartados = []
+    hosts_descartados = []
+
+    for ip, bem_lista in hosts:
+        # 1. Teste de Socket TCP 22 (maquina ligada)
+        if not testa_porta_ssh(ip, timeout=2.0):
+            gravar_log(caminho_log_local, "INFO",
+                       _linha(ip, "OFFLINE", "N/A", OBS_OFFLINE),
+                       args.verbose, False)
+            registros_descartados.append(_registro_descartado(ip))
+            hosts_descartados.append((ip, bem_lista))
+            continue
+
+        # 2. Teste de Acesso SSH via chave publica
+        if testa_conexao_ssh(ip, ssh_user):
+            gravar_log(caminho_log_local, "INFO",
+                       _linha(ip, "ONLINE", "OK (Chave publica)", OBS_OK),
+                       args.verbose, False)
+            hosts_validos.append((ip, bem_lista, True))
+            continue
+
+        # 3. Chave publica falhou. Verifica se ha credenciais para bootstrap
+        if ssh_pass:
+            gravar_log(caminho_log_local, "INFO",
+                       _linha(ip, "ONLINE", "PENDENTE (Bootstrap com senha)", OBS_PENDENTE),
+                       args.verbose, False)
+            hosts_validos.append((ip, bem_lista, False))
+        else:
+            gravar_log(caminho_log_local, "INFO",
+                       _linha(ip, "ONLINE", "NEGADO (Chave ausente/Sem senha)", OBS_NEGADO),
+                       args.verbose, False)
+            registros_descartados.append(_registro_descartado(ip))
+            hosts_descartados.append((ip, bem_lista))
+
+    gravar_log(caminho_log_local, "INFO", divisor, args.verbose, False)
+    gravar_log(caminho_log_local, "INFO", "Fim da triagem: {} host(s) validos de {} total.".format(
+        len(hosts_validos), len(hosts)), args.verbose, False)
+    gravar_log(caminho_log_local, "INFO", "=" * 70, args.verbose, False)
+
+    return hosts_validos, registros_descartados, hosts_descartados
 
 

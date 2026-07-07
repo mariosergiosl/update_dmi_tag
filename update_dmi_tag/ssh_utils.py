@@ -16,8 +16,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
@@ -29,10 +32,13 @@
 #                        chamador (host_processor) detectar a ausencia
 #                        de privilegio e logar/abortar adequadamente
 #                        em vez de tentar gravar sem permissao.
+# REVISION: 2026-07-06 - v2.1.9 - adiciona a funcao testa_porta_ssh
+#                        para teste rapido de conectividade TCP na porta 22.
 #
 # =======================================================================
 
 import os
+import socket
 import subprocess
 
 from .constants import SSH_OPTS
@@ -78,6 +84,23 @@ def testa_conexao_ssh(ip, ssh_user):
     """
     rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=5)
     return rc == 0
+
+
+def testa_porta_ssh(ip, porta=22, timeout=2.0):
+    """
+    NAME: testa_porta_ssh
+    DESCRIPTION: Testa se o host remoto esta ativo e respondendo na porta SSH (TCP 22)
+                 utilizando um socket rapido. Evita timeouts de 5s+ do comando ssh.
+    PARAMETER: ip      - endereco IP do host
+               porta   - porta TCP (padrao: 22)
+               timeout - tempo limite em segundos (padrao: 2.0)
+    RETURNS: bool -- True se conexao estabelecida, False caso contrario
+    """
+    try:
+        with socket.create_connection((ip, porta), timeout=timeout):
+            return True
+    except (socket.timeout, OSError):
+        return False
 
 
 

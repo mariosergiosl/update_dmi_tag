@@ -15,8 +15,19 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - cmd_remoto em executa_amidelnx_remoto
+#                        passa a escapar o valor da tag com shlex.quote.
+#                        Sem isso, valores com espaco (todas as tags virgens:
+#                        "Default string", "To Be Filled By O.E.M.") eram
+#                        quebrados em varios argumentos pelo shell remoto,
+#                        travando o amidelnx_64 ate o timeout de 30s. Isso
+#                        derrubava sistematicamente a restauracao da tag
+#                        virgem no --test-write (ver write_cascade.py).
+# REVISION: 2026-07-07 - v2.1.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
@@ -31,6 +42,7 @@
 # =======================================================================
 
 import os
+import shlex
 import subprocess
 
 from .constants import MecanismoIndisponivelError
@@ -199,7 +211,13 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
         _log("DEBUG", "PRE-EXEC amidelnx ja em execucao: {}".format(
             _filtra_banner(ps_antes).strip()))
 
-    cmd_remoto = "{} {} /ca {}".format(sudo_cmd, caminho_amide_remoto, tag)
+    # shlex.quote e obrigatorio aqui: tag pode conter espacos (todas as
+    # tags virgens tem espaco, ex. "Default string", "To Be Filled By
+    # O.E.M."). Sem o quote, o shell remoto quebra o valor em varios
+    # argumentos e o amidelnx_64 trava ate o timeout de 30s (ver historico
+    # de REVISION no cabecalho deste arquivo).
+    cmd_remoto = "{} {} /ca {}".format(
+        sudo_cmd, caminho_amide_remoto, shlex.quote(tag))
     rc, stdout, stderr = ssh_run(ip, ssh_user, cmd_remoto, timeout=30)
 
     # Remove o banner corporativo que pode vazar para stdout em alguns

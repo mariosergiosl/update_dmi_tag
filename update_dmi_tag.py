@@ -37,7 +37,7 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
 #
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 #
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
@@ -46,6 +46,8 @@
 #                        dentro de update_dmi_tag/. Ver
 #                        update_dmi_tag/constants.py para o historico
 #                        completo de revisoes (REVISION) anterior a esta.
+# REVISION: 2026-07-06 - v2.1.9 - atualizacao do shim para nova versao de controle.
+# REVISION: 2026-07-07 - v2.1.10 - atualizacao do shim para nova versao de controle.
 #
 # =======================================================================
 

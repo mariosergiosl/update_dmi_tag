@@ -17,8 +17,23 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - corrige falha silenciosa na restauracao
+#                        da tag virgem em tenta_teste_escrita_remoto: o
+#                        resultado da cascata de restauracao era descartado,
+#                        entao uma restauracao que falhasse (ex. timeout de
+#                        SSH, ver bios_amidelnx.py) nunca aparecia para o
+#                        operador -- a funcao sempre retornava o resultado
+#                        do teste original (ex. "OK-amidelnx"), mesmo com a
+#                        BIOS deixada com o valor de teste em vez do valor
+#                        virgem. Agora o resultado da restauracao e
+#                        verificado; se falhar, loga ERROR detalhado e
+#                        retorna "RESTORE-FALHOU" (visivel na coluna Teste
+#                        Escrita da tabela de resumo).
+# REVISION: 2026-07-07 - v2.1.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 #                        apenas imports ajustados para o pacote.
@@ -182,8 +197,10 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                                    usado como valor de teste quando a
                                    tag atual for virgem (opcional)
     RETURNS: str -- "OK-amidelnx", "OK-amibios", "FALHOU-todos",
-             "TAG-VIRGEM" (obsoleto, mantido para compatibilidade) ou
-             "TAG-DESCONH"
+             "RESTORE-FALHOU" (teste gravou com sucesso mas a restauracao do
+             valor virgem original falhou -- a BIOS deste host permanece com
+             o valor de teste, requer correcao manual), "TAG-VIRGEM"
+             (obsoleto, mantido para compatibilidade) ou "TAG-DESCONH"
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
@@ -256,7 +273,22 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                  "[TEST-WRITE] Restaurando tag virgem original: "
                  "'{}'".format(tag_restore if tag_restore else "vazio"))
             tag_restaurar = tag_restore if tag_restore else "O.E.M."
-            _executa_cascata(tag_restaurar)
+            _, restaurou = _executa_cascata(tag_restaurar)
+            if not restaurou:
+                # Nao pode ficar silencioso: a BIOS deste host ficou com o
+                # valor de teste em vez do valor virgem original. Isso ja
+                # aconteceu em producao (ver historico de REVISION) por um
+                # bug de quoting hoje corrigido em bios_amidelnx.py, mas a
+                # falha de restauracao pode ter outras causas (rede, sudo,
+                # etc.) e precisa continuar visivel sempre que ocorrer.
+                _log("ERROR",
+                     "[TEST-WRITE] ATENCAO -- restauracao da tag virgem "
+                     "FALHOU. A BIOS deste host permanece gravada com o "
+                     "valor de teste '{}' em vez do valor virgem original "
+                     "'{}'. Corrija manualmente assim que possivel (ex.: "
+                     "sudo ~/amidelnx_64 /ca '{}').".format(
+                         tag_teste, tag_restore, tag_restore))
+                return "RESTORE-FALHOU"
         return resultado
 
     # 3. Tag conhecida -- rewrite no-op direto

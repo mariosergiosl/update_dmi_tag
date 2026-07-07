@@ -30,8 +30,12 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-05-29
+# REVISION: 2026-07-07 - v2.1.10 - RC do modo remoto passa a considerar
+#                        teste_escrita == "RESTORE-FALHOU" como falha (retorna
+#                        1), alem do criterio existente de "resultado". Ver
+#                        write_cascade.py para o novo status.
 # REVISION: 2026-06-15 - v2.1.4 - adiciona argumento --test-write.
 # REVISION: 2026-06-15 - v2.1.5 - loga a linha de comando completa
 #                        (sys.argv via shlex.quote) no cabecalho de
@@ -39,6 +43,19 @@
 #                        passa a incluir descricao de TEST-WRITE quando
 #                        --test-write esta ativo. Aplicado em modo
 #                        remoto e standalone.
+# REVISION: 2026-07-06 - v2.1.9 - adiciona validacoes previas de arquivos
+#                        locais, do parametro --ssh-pass-file e Fase 1 de
+#                        triagem de conectividade de hosts remotos.
+# REVISION: 2026-07-07 - v2.1.9 - --amide-local-path passa a distinguir
+#                        explicito (erro fatal se invalido) de default nao
+#                        informado (avisa e pergunta se houver terminal
+#                        interativo; segue automaticamente se nao houver).
+#                        Grava arquivo separado com os hosts descartados na
+#                        triagem (Fase 1) para reprocessamento posterior.
+# REVISION: 2026-07-07 - v2.1.9 - repassa a flag chave_ok (retornada por
+#                        triagem_hosts_remotos) para processa_host_remoto via
+#                        chave_ja_validada, evitando retest de porta/SSH ja
+#                        confirmados na Fase 1.
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py
 #                        (arquivo unico) na modularizacao em pacote.
 #                        Logica de main() e checa_superusuario()
@@ -91,7 +108,7 @@ from .patrimonio import valida_e_calcula_tag, valida_via_patrimonial_cli
 from .bbconfig import le_valor_configuracao, sincroniza_bbconfig_local
 from .write_cascade import tenta_escrever_tag_local
 from .hosts import le_arquivo_hosts
-from .host_processor import processa_host_remoto
+from .host_processor import processa_host_remoto, triagem_hosts_remotos
 from .summary import monta_tabela_resumo
 
 
@@ -187,9 +204,13 @@ def main():
     )
 
     # --- Mecanismo 1: amidelnx_64 ---
+    # default=None (em vez do caminho ja resolvido) para que, apos o parse,
+    # seja possivel diferenciar "usuario nao informou --amide-local-path"
+    # (default de conveniencia, tratado com aviso) de "usuario informou um
+    # caminho que nao existe" (erro fatal). Ver validacao apos parse_args().
     parser.add_argument(
         "--amide-local-path",
-        default=DEFAULT_AMIDE_LOCAL_PATH,
+        default=None,
         help="Caminho local do amidelnx_64 para scp (padrao: mesmo dir do script)",
     )
     parser.add_argument(
@@ -289,6 +310,75 @@ def main():
     # bootstrap possa consulta-la com getattr sem erro.
     args.ssh_pass_efetiva = _resolve_ssh_pass(args)
 
+    # Validacoes previas de arquivos locais.
+    # Regra: parametro informado explicitamente pelo usuario e invalido =>
+    # aborta sempre (erro duro, sem excecao). Parametro nao informado que
+    # dependia de um valor de conveniencia (default) que nao existe => nao
+    # e um erro do usuario, entao apenas avisa (e pergunta, se possivel).
+    if args.hosts:
+        if not os.path.isfile(args.hosts):
+            sys.stderr.write("Erro: arquivo de hosts nao encontrado: {}\n".format(args.hosts))
+            sys.exit(RC_FILE_NOT_FOUND)
+
+    if args.ssh_pass_file:
+        if not os.path.isfile(args.ssh_pass_file):
+            sys.stderr.write("Erro: arquivo de senha SSH nao encontrado: {}\n".format(args.ssh_pass_file))
+            sys.exit(RC_FILE_NOT_FOUND)
+        # Se informou o arquivo de senha, valida se a senha lida nao esta vazia.
+        # ssh_pass_efetiva ja e o resultado da precedencia --ssh-pass > SSH_PASS
+        # > --ssh-pass-file (ver _resolve_ssh_pass); se estiver vazia aqui e
+        # porque nenhuma das tres fontes produziu senha.
+        if not args.ssh_pass_efetiva:
+            sys.stderr.write("Erro: arquivo de senha SSH '{}' existe mas esta vazio ou nao pode ser lido.\n".format(args.ssh_pass_file))
+            sys.exit(RC_PERMISSION_ERROR)
+
+    # --amide-local-path: distingue explicito (usuario passou) de default
+    # (chute de conveniencia = pasta atual). So sabemos qual foi por causa
+    # do default=None no argparse.
+    amide_local_explicito = args.amide_local_path is not None
+    if args.amide_local_path is None:
+        args.amide_local_path = DEFAULT_AMIDE_LOCAL_PATH
+
+    if not os.path.isfile(args.amide_local_path):
+        if amide_local_explicito:
+            sys.stderr.write("Erro: binario do Amide local nao encontrado: {}\n".format(args.amide_local_path))
+            sys.exit(RC_FILE_NOT_FOUND)
+
+        # Nao foi informado -- e apenas um chute de conveniencia. Nao trava
+        # a execucao inteira por isso: avisa e, se houver terminal
+        # interativo, pergunta antes de prosseguir. Sem terminal (chamado
+        # por outro script, pipe, etc.), segue automaticamente apos avisar,
+        # pois nao ha como perguntar.
+        if args.hosts:
+            contexto = ("Hosts remotos que ainda nao tem o binario instalado "
+                        "vao depender apenas do Mecanismo 2 (sysfs).")
+            caminho_log_aviso = args.log_local
+        else:
+            contexto = "Este host vai depender apenas do Mecanismo 2 (sysfs)."
+            caminho_log_aviso = args.log_file
+
+        aviso = ("Binario amidelnx_64 nao encontrado em '{}' (--amide-local-path "
+                 "nao foi informado). {}").format(args.amide_local_path, contexto)
+        gravar_log(caminho_log_aviso, "WARNING", aviso, args.verbose, False)
+
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            sys.stderr.write("AVISO: {}\n".format(aviso))
+            resposta = input("Deseja continuar mesmo assim? [s/N]: ").strip().lower()
+            if resposta not in ("s", "sim", "y", "yes"):
+                gravar_log(caminho_log_aviso, "ERROR",
+                           "Execucao cancelada pelo usuario (binario Amide ausente).",
+                           args.verbose, False)
+                sys.stderr.write("Execucao cancelada.\n")
+                sys.exit(RC_FILE_NOT_FOUND)
+            gravar_log(caminho_log_aviso, "INFO",
+                       "Usuario confirmou prosseguir sem o binario local do Amide.",
+                       args.verbose, False)
+        else:
+            gravar_log(caminho_log_aviso, "WARNING",
+                       "Execucao nao-interativa detectada (sem terminal): "
+                       "prosseguindo automaticamente.",
+                       args.verbose, False)
+
     # Em modo remoto, se --log-file nao foi passado explicitamente,
     # redireciona para arquivo local (evita Permission denied em /var/log).
     if args.hosts and args.log_file == DEFAULT_LOG_FILE:
@@ -357,11 +447,35 @@ def main():
         _log_local("INFO", "=" * 70)
 
         hosts = le_arquivo_hosts(args.hosts)
-        registros = []
 
-        for ip, bem_lista in hosts:
+        # Fase 1: Triagem preliminar de conectividade e acesso de todos os hosts
+        hosts_validos, registros, hosts_descartados = triagem_hosts_remotos(
+            hosts, args, args.log_local)
+
+        # Grava arquivo separado com os hosts descartados na triagem (offline
+        # ou acesso negado), no mesmo formato aceito por --hosts, para
+        # facilitar reprocessar so esses depois.
+        if hosts_descartados:
+            caminho_inacessiveis = os.path.join(
+                os.path.dirname(os.path.abspath(args.log_local)),
+                "hosts_inacessiveis_{}.txt".format(time.strftime("%Y%m%d_%H%M%S")))
+            try:
+                with open(caminho_inacessiveis, "w", encoding="utf-8") as f:
+                    for ip, bem in hosts_descartados:
+                        f.write("{},{}\n".format(ip, bem) if bem else "{}\n".format(ip))
+                _log_local("INFO", "Hosts inacessiveis ({}) gravados em: {}".format(
+                    len(hosts_descartados), caminho_inacessiveis))
+            except Exception as e:
+                _log_local("WARNING", "Nao foi possivel gravar arquivo de hosts "
+                           "inacessiveis {}: {}".format(caminho_inacessiveis, e))
+
+        # Fase 2: Processamento ativo da BIOS nos hosts acessiveis.
+        # chave_ok=True (confirmado na Fase 1) evita repetir o retest de
+        # porta/chave SSH dentro de processa_host_remoto.
+        for ip, bem_lista, chave_ok in hosts_validos:
             registro = processa_host_remoto(
-                ip, bem_lista, args, args.log_local)
+                ip, bem_lista, args, args.log_local,
+                chave_ja_validada=chave_ok)
             registros.append(registro)
 
         monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv,
@@ -375,11 +489,14 @@ def main():
         _log_local("INFO", "Log   : {}".format(args.log_local))
         _log_local("INFO", "=" * 70)
 
-        # RC do modo remoto: 0 se todos OK ou DRY-RUN, 1 se algum falhou
-        # RC do modo remoto: 0 se todos OK ou DRY-RUN, 1 se algum falhou
+        # RC do modo remoto: 0 se todos OK ou DRY-RUN, 1 se algum falhou.
+        # RESTORE-FALHOU (teste_escrita) tambem conta como falha: mesmo com
+        # resultado "DRY-RUN", o --test-write pode ter deixado a BIOS com o
+        # valor de teste em vez do valor virgem original (ver write_cascade.py).
         falhas = sum(1 for r in registros
-                     if not str(r.get("resultado", "")).startswith("OK")
-                     and r.get("resultado") not in ("DRY-RUN", "PENDENTE", "INVALIDO"))
+                     if (not str(r.get("resultado", "")).startswith("OK")
+                         and r.get("resultado") not in ("DRY-RUN", "PENDENTE", "INVALIDO"))
+                     or r.get("teste_escrita") == "RESTORE-FALHOU")
         return 0 if falhas == 0 else 1
 
     # ===================================================================

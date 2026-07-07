@@ -17,8 +17,14 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
+# REVISION: 2026-07-07 - v2.1.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 # REVISION: 2026-06-15 - v2.1.3 - cascata de fallback para SMBIOS Ver e

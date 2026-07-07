@@ -13,11 +13,17 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py (arquivo
 #                        unico) na modularizacao em pacote. Conteudo
 #                        identico ao bloco de constantes original.
+# REVISION: 2026-07-06 - v2.1.9 - incremento de versao para validacoes previas
+#                        e teste de socket TCP na porta 22.
+# REVISION: 2026-07-07 - v2.1.10 - incremento de versao: corrige falha
+#                        silenciosa na restauracao da tag virgem do
+#                        --test-write (novo status RESTORE-FALHOU) e ajusta
+#                        a tabela da Fase 1 de triagem.
 #
 # =======================================================================
 
@@ -59,7 +65,7 @@ class TodosMecanismosFalharam(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.1.8"
+SCRIPT_VERSION = "2.1.10"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"

@@ -13,8 +13,24 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.8
+# VERSION: 2.1.10
 # CREATED: 2026-06-12
+# REVISION: 2026-07-07 - v2.1.10 - alarga a coluna Teste Escrita (13 -> 15)
+#                        para acomodar o novo status RESTORE-FALHOU (ver
+#                        write_cascade.py), que sinaliza quando a
+#                        restauracao da tag virgem no --test-write falha e a
+#                        BIOS fica com o valor de teste em vez do original.
+# REVISION: 2026-07-07 - v2.1.10 - adiciona bloco "Teste de Escrita" ao
+#                        sumario agregado, com contagem de OK-amidelnx/
+#                        OK-amibios/FALHOU-todos/RESTORE-FALHOU/TAG-DESCONH.
+#                        Antes so aparecia por host na tabela detalhada; o
+#                        sumario so contava "Resultado" (gravacao real, que
+#                        so acontece com --write), deixando sem visibilidade
+#                        agregada quantos hosts o --test-write realmente
+#                        confirmou como compativeis ou nao.
+# REVISION: 2026-07-07 - v2.1.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-06-12 - v2.1.0 - extraido de update_dmi_tag.py na
 #                        modularizacao em pacote. Conteudo identico,
 # REVISION: 2026-06-15 - v2.1.1 - adiciona coluna MAC.
@@ -199,7 +215,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         "bem_usado":      14,
         "tag_depois":     15,
         "resultado":      13,
-        "teste_escrita":  13,
+        "teste_escrita":  15,
         "bbconfig_sync":  17,
         "mac":            52,
     }
@@ -330,5 +346,45 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     _escreve("  " + "-" * 60)
     _escreve("  Total processado           : {:3d}".format(total))
     _escreve("")
+
+    # =====================================================================
+    # CONTADORES -- TESTE DE ESCRITA (--test-write)
+    # So exibido se --test-write foi usado (algum registro com
+    # teste_escrita != "N/A"). Importante nao confundir com os contadores
+    # acima: "Resultado" e sobre a gravacao REAL do BEM_NUMERO (so acontece
+    # com --write); "Teste Escrita" e sobre a validacao de compatibilidade
+    # do modelo (roda mesmo em DRY-RUN, sempre que --test-write e passado).
+    # Um host pode aparecer como "DRY-RUN" no Resultado e ainda assim ja
+    # informar aqui se, no dia em que --write for usado, a gravacao real
+    # vai funcionar (OK-amidelnx/OK-amibios) ou falhar (FALHOU-todos) nesse
+    # modelo especifico.
+    # =====================================================================
+    te_ok_amidelnx      = sum(1 for r in registros if r.get("teste_escrita") == "OK-amidelnx")
+    te_ok_amibios       = sum(1 for r in registros if r.get("teste_escrita") == "OK-amibios")
+    te_falhou           = sum(1 for r in registros if r.get("teste_escrita") == "FALHOU-todos")
+    te_restore_falhou   = sum(1 for r in registros if r.get("teste_escrita") == "RESTORE-FALHOU")
+    te_tag_desconh      = sum(1 for r in registros if r.get("teste_escrita") == "TAG-DESCONH")
+    te_testado          = (te_ok_amidelnx + te_ok_amibios + te_falhou
+                            + te_restore_falhou + te_tag_desconh)
+
+    if te_testado > 0:
+        _escreve("  --- Teste de Escrita (--test-write): compatibilidade do modelo, "
+                 "nao e a gravacao real do BEM_NUMERO ---")
+        _escreve("  Compativel (OK-amidelnx)   : {:3d}  -- Mecanismo 1 grava neste modelo".format(
+            te_ok_amidelnx))
+        _escreve("  Compativel (OK-amibios)    : {:3d}  -- Mecanismo 2 grava neste modelo (fallback)".format(
+            te_ok_amibios))
+        _escreve("  Incompativel (FALHOU-todos): {:3d}  -- nenhum mecanismo grava neste modelo hoje".format(
+            te_falhou))
+        if te_restore_falhou > 0:
+            _escreve("  ATENCAO (RESTORE-FALHOU)   : {:3d}  -- teste gravou, mas a restauracao do valor "
+                     "virgem falhou; BIOS ficou com o valor de teste, corrija manualmente".format(
+                         te_restore_falhou))
+        _escreve("  Pulado (TAG-DESCONH)       : {:3d}  -- tag ilegivel no momento da leitura".format(
+            te_tag_desconh))
+        _escreve("  " + "-" * 60)
+        _escreve("  Total testado              : {:3d}  (de {} processados)".format(
+            te_testado, total))
+        _escreve("")
 
 
