@@ -35,7 +35,7 @@
 # NOTES: Codificacao US-ASCII nos comentarios e codigo-fonte.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE, consultor BB
+# COMPANY: SUSE
 #
 # VERSION: 2.1.12
 #

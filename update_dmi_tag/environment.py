@@ -16,7 +16,7 @@
 #              "modulo inserido no kernel" de "interface SMI respondendo".
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE, consultor BB
+# COMPANY: SUSE
 # VERSION: 2.1.12
 # CREATED: 2026-06-12
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
