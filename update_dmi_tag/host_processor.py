@@ -15,8 +15,18 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - registro["tag_depois"] passa a virar
+#                        "DESCONHECIDO" quando resultado_escrita for
+#                        "TRAVADO-POS-REBOOT" (Mecanismo 4, ver
+#                        write_cascade.py/boot_efi.py), assumir tag_antes
+#                        nesse caso seria enganoso, pois nao ha como
+#                        confirmar por SSH se a gravacao chegou a
+#                        acontecer antes do host travar.
 # REVISION: 2026-07-07 - v2.1.10 - tabela da Fase 1 (triagem) passa a usar
 #                        nivel INFO uniforme em todas as linhas (evita
 #                        desalinhamento causado por ERROR/WARNING terem
@@ -97,7 +107,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
                                     trips de rede redundantes. Default False
                                     preserva o comportamento antigo para
                                     quem chamar esta funcao diretamente.
-    RETURNS: dict -- dados do host para compor a linha do resumo
+    RETURNS: dict, dados do host para compor a linha do resumo
     """
     caminho_log_remoto = args.log_file
     ssh_user           = args.ssh_user
@@ -202,7 +212,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         rc_rpm, stdout_rpm, _ = ssh_run(
             ip, ssh_user,
             "rpm -q {} 2>/dev/null | head -1 || echo AUSENTE".format(pkg))
-        # Pega apenas a primeira linha relevante -- rpm em SLES
+        # Pega apenas a primeira linha relevante, rpm em SLES
         # pode retornar mensagem em portugues no stdout
         linhas_rpm = [x.strip() for x in stdout_rpm.splitlines() if x.strip()]
         nvr = linhas_rpm[0] if linhas_rpm else "AUSENTE"
@@ -227,7 +237,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
             gravar_log_remoto(
                 ip, ssh_user, sudo_cmd, caminho_log_remoto,
                 "WARNING",
-                "BEM_NUMERO da lista ({}) difere do BBconfig ({}) -- usando da lista.".format(
+                "BEM_NUMERO da lista ({}) difere do BBconfig ({}), usando da lista.".format(
                     bem_numero_lista, bem_conf),
                 caminho_log_local, args.verbose, args.csv)
         bem_usar = bem_numero_lista
@@ -244,7 +254,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
     else:
         gravar_log_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto,
-            "WARNING", "BEM_NUMERO ausente em todas as fontes -- host ignorado.",
+            "WARNING", "BEM_NUMERO ausente em todas as fontes, host ignorado.",
             caminho_log_local, args.verbose, args.csv)
         registro["resultado"] = "PENDENTE"
         return registro
@@ -280,7 +290,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
                 dv_calc, tag_esperada),
             caminho_log_local, args.verbose, args.csv)
 
-    # Validacao redundante CLI patrimonial -- loga com prefixo [IP]
+    # Validacao redundante CLI patrimonial, loga com prefixo [IP]
     tag_cli = valida_via_patrimonial_cli(base_13, "", False, True)
     if tag_cli:
         gravar_log_remoto(
@@ -316,7 +326,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         registro["tag_depois"] = registro["tag_antes"]
         gravar_log_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
-            "====== Fim do processamento: {} -- SEM-SUDO ======".format(ip),
+            "====== Fim do processamento: {}, SEM-SUDO ======".format(ip),
             caminho_log_local, args.verbose, args.csv)
         return registro
 
@@ -334,6 +344,11 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
             "{} dmidecode -s chassis-asset-tag 2>/dev/null".format(sudo_cmd),
             timeout=10)
         registro["tag_depois"] = tag_depois.strip() or "N/D"
+    elif resultado_escrita == "TRAVADO-POS-REBOOT":
+        # Mecanismo 4: host nao respondeu apos o reboot. Nao ha como
+        # confirmar por SSH se a gravacao chegou a acontecer antes de
+        # travar, assumir tag_antes aqui seria enganoso.
+        registro["tag_depois"] = "DESCONHECIDO"
     else:
         registro["tag_depois"] = registro["tag_antes"]
 
@@ -406,7 +421,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
     gravar_log_remoto(
         ip, ssh_user, sudo_cmd, caminho_log_remoto,
         "INFO",
-        "====== Fim do processamento: {} -- {} ======".format(
+        "====== Fim do processamento: {}, {} ======".format(
             ip, resultado_escrita),
         caminho_log_local, args.verbose, args.csv)
 
@@ -467,7 +482,7 @@ def _registro_descartado(ip):
                  na tabela de resumo para um host descartado na triagem
                  (Fase 1), seja por estar offline ou por acesso negado.
     PARAMETER: ip - endereco IP do host descartado
-    RETURNS: dict -- registro no mesmo formato usado por processa_host_remoto
+    RETURNS: dict, registro no mesmo formato usado por processa_host_remoto
     """
     return {
         "ip":              ip,
@@ -502,7 +517,7 @@ def triagem_hosts_remotos(hosts, args, caminho_log_local):
     PARAMETER: hosts             - lista de tuplas (ip, bem_numero)
                args              - namespace do argparse
                caminho_log_local - log consolidado local
-    RETURNS: tuple(list, list, list) -- (hosts_validos, registros_descartados,
+    RETURNS: tuple(list, list, list), (hosts_validos, registros_descartados,
              hosts_descartados).
              hosts_validos e uma lista de tuplas (ip, bem_numero, chave_ok):
              chave_ok=True indica que a chave publica ja foi confirmada
@@ -517,14 +532,14 @@ def triagem_hosts_remotos(hosts, args, caminho_log_local):
     ssh_user = args.ssh_user
     ssh_pass = getattr(args, "ssh_pass_efetiva", "")
 
-    # Observacoes humanizadas por status -- curtas de proposito, para nao
+    # Observacoes humanizadas por status, curtas de proposito, para nao
     # quebrar linha e desalinhar a tabela no terminal/log (o detalhe extra,
     # como o nome do arquivo de hosts inacessiveis, ja sai logo depois em
     # uma linha de log separada, nao precisa repetir aqui).
-    OBS_OFFLINE  = "Desligada ou sem rede -- nao sera processada agora."
-    OBS_OK       = "Nenhuma acao necessaria -- sera processada na Fase 2."
+    OBS_OFFLINE  = "Desligada ou sem rede, nao sera processada agora."
+    OBS_OK       = "Nenhuma acao necessaria, sera processada na Fase 2."
     OBS_PENDENTE = "Sera processada; chave SSH autorizada via senha na Fase 2."
-    OBS_NEGADO   = "Sem chave/senha -- nao processada. Informe --ssh-pass."
+    OBS_NEGADO   = "Sem chave/senha, nao processada. Informe --ssh-pass."
 
     # Larguras calculadas a partir do maior conteudo de cada coluna (cabecalho
     # ou observacao), para a tabela nunca ficar desalinhada.

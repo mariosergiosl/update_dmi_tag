@@ -13,8 +13,18 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - adiciona descricoes e contadores para os
+#                        status do Mecanismo 4 (OK-efiboot, FALHOU-efiboot,
+#                        TRAVADO-POS-REBOOT, BLOQUEADO-*). Novo bloco
+#                        "Mecanismo 4" no sumario agregado, so exibido
+#                        quando --allow-efi-fallback foi usado em algum
+#                        host, com destaque especial para
+#                        TRAVADO-POS-REBOOT (requer verificacao fisica).
 # REVISION: 2026-07-07 - v2.1.10 - alarga a coluna Teste Escrita (13 -> 15)
 #                        para acomodar o novo status RESTORE-FALHOU (ver
 #                        write_cascade.py), que sinaliza quando a
@@ -63,7 +73,7 @@ def _normaliza_fabricante(board_vendor):
                    "Positivo Tecnologia" -> "Positivo"
                  Demais fabricantes permanecem inalterados.
     PARAMETER: board_vendor - string do fabricante (registro["board_vendor"])
-    RETURNS: str -- fabricante normalizado
+    RETURNS: str, fabricante normalizado
     """
     if not board_vendor:
         return board_vendor
@@ -89,7 +99,7 @@ def _normaliza_bios_vendor(bios_vendor):
                  (sem perder informacao inesperadamente).
     PARAMETER: bios_vendor - string do fabricante da BIOS
                              (registro["bios_vendor"])
-    RETURNS: str -- fabricante abreviado ou primeiros 10 chars se
+    RETURNS: str, fabricante abreviado ou primeiros 10 chars se
              desconhecido
     """
     if not bios_vendor or bios_vendor == "N/D":
@@ -116,9 +126,13 @@ def _normaliza_bios_vendor(bios_vendor):
 # usado no sumario agregado. Chaves sao comparadas por prefixo (ex:
 # "FALHOU" cobre "FALHOU-todos"; "INACESSIVEL" e exato).
 _DESCRICOES_RESULTADO = (
+    ("OK-efiboot",  "Sucesso via Mecanismo 4 (boot EFI temporario apos reboot unico, ver log dedicado)."),
     ("OK-amidelnx", "Sucesso. Gravacao confirmada via amidelnx_64 (Mecanismo 1)."),
     ("OK-amibios",  "Sucesso. Gravacao confirmada via amibios_dmi/sysfs (Mecanismo 2, fallback)."),
     ("DRY-RUN",     "Leitura realizada com sucesso (Simulacao). Nenhuma gravacao executada."),
+    ("TRAVADO-POS-REBOOT", "ATENCAO: Mecanismo 4 reiniciou o host e ele nao respondeu via SSH, requer intervencao fisica."),
+    ("FALHOU-efiboot", "Mecanismo 4 tentado (host voltou do reboot) mas a tag nao conferiu."),
+    ("BLOQUEADO-",  "Mecanismo 4 nao foi tentado por seguranca (Secure Boot, TPM, espaco, etc., ver log dedicado)."),
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
     ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
@@ -139,7 +153,7 @@ def _descricao_resultado(resultado):
                  introduzidos no futuro).
     PARAMETER: resultado - string de resultado (ex: "OK-amidelnx",
                "FALHOU-todos", "INACESSIVEL")
-    RETURNS: str -- descricao em linguagem natural
+    RETURNS: str, descricao em linguagem natural
     """
     resultado = str(resultado or "")
     for prefixo, descricao in _DESCRICOES_RESULTADO:
@@ -153,13 +167,13 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     """
     NAME: monta_tabela_resumo
     DESCRIPTION: Gera duas tabelas no log final:
-                   1. TABELA DETALHADA -- uma linha por host, com
+                   1. TABELA DETALHADA, uma linha por host, com
                       colunas IP, Hostname, Placa (normalizada), BIOS,
                       SMBIOS, WSMT, Tag Antes, BEM conf, BEM usado,
                       Tag Depois, Resultado, BBconfig (status da
                       sincronizacao do BBconfig.conf) e Backup (nome do
                       arquivo de backup gerado, se houve).
-                   2. SUMARIO AGREGADO -- agrupa os registros por
+                   2. SUMARIO AGREGADO, agrupa os registros por
                       (BIOS, flag -w, Resultado), mostrando a contagem
                       de cada combinacao e uma descricao em linguagem
                       natural do que aquele resultado significa
@@ -330,8 +344,22 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # Host inacessivel via SSH
     inacessivel = sum(1 for r in registros if r.get("resultado") == "INACESSIVEL")
 
-    # Qualquer outro status nao mapeado acima
-    outros = total - ok_total - dryrun - falhou - sem_sudo - pendente - invalido - inacessivel
+    # Mecanismo 4 (boot EFI, experimental, ver boot_efi.py)
+    efiboot_ok        = sum(1 for r in registros if r.get("resultado") == "OK-efiboot")
+    efiboot_falhou    = sum(1 for r in registros if r.get("resultado") == "FALHOU-efiboot")
+    efiboot_travado   = sum(1 for r in registros if r.get("resultado") == "TRAVADO-POS-REBOOT")
+    efiboot_bloqueado = sum(1 for r in registros if str(r.get("resultado", "")).startswith("BLOQUEADO-"))
+    efiboot_total     = efiboot_ok + efiboot_falhou + efiboot_travado + efiboot_bloqueado
+
+    # Qualquer outro status nao mapeado acima.
+    # efiboot_falhou NAO entra aqui: "FALHOU-efiboot" ja comeca com "FALHOU"
+    # e portanto ja esta contado dentro de "falhou" acima. So subtraimos os
+    # 3 status de Mecanismo 4 que nao tem bucket proprio nos contadores
+    # classicos (OK-efiboot, TRAVADO-POS-REBOOT, BLOQUEADO-*), subtrair
+    # efiboot_total inteiro contaria FALHOU-efiboot duas vezes.
+    outros = (total - ok_total - dryrun - falhou - sem_sudo - pendente
+              - invalido - inacessivel
+              - efiboot_ok - efiboot_travado - efiboot_bloqueado)
 
     _escreve("  Gravacao OK (amidelnx_64)  : {:3d}  -- escrita confirmada via Mecanismo 1".format(ok_amidelnx))
     _escreve("  Gravacao OK (amibios_dmi)  : {:3d}  -- escrita confirmada via Mecanismo 2 (fallback)".format(ok_amibios))
@@ -348,7 +376,30 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     _escreve("")
 
     # =====================================================================
-    # CONTADORES -- TESTE DE ESCRITA (--test-write)
+    # CONTADORES, MECANISMO 4 (boot EFI, experimental)
+    # So exibido se --allow-efi-fallback foi usado em algum host (algum
+    # registro com resultado OK-efiboot/FALHOU-efiboot/TRAVADO-POS-REBOOT/
+    # BLOQUEADO-*). Destaque especial para TRAVADO-POS-REBOOT: e o unico
+    # status do pacote inteiro que significa "host pode estar preso,
+    # requer verificacao fisica imediata".
+    # =====================================================================
+    if efiboot_total > 0:
+        _escreve("  --- Mecanismo 4 (boot EFI, experimental) ---")
+        _escreve("  OK (OK-efiboot)            : {:3d}  -- gravado com sucesso via reboot/EFI Shell".format(
+            efiboot_ok))
+        _escreve("  Falhou (FALHOU-efiboot)    : {:3d}  -- host voltou do reboot mas a tag nao conferiu".format(
+            efiboot_falhou))
+        _escreve("  Bloqueado (BLOQUEADO-*)    : {:3d}  -- nao tentado por seguranca (ver log dedicado)".format(
+            efiboot_bloqueado))
+        if efiboot_travado > 0:
+            _escreve("  *** TRAVADO-POS-REBOOT ***  : {:3d}  -- HOST(S) NAO RESPONDERAM APOS O REBOOT -- "
+                     "VERIFICACAO FISICA IMEDIATA".format(efiboot_travado))
+        _escreve("  " + "-" * 60)
+        _escreve("  Total Mecanismo 4          : {:3d}".format(efiboot_total))
+        _escreve("")
+
+    # =====================================================================
+    # CONTADORES, TESTE DE ESCRITA (--test-write)
     # So exibido se --test-write foi usado (algum registro com
     # teste_escrita != "N/A"). Importante nao confundir com os contadores
     # acima: "Resultado" e sobre a gravacao REAL do BEM_NUMERO (so acontece

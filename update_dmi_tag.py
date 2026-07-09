@@ -11,7 +11,7 @@
 # DESCRIPTION: Shim de compatibilidade. A partir da v2.1.2, a logica do
 #              script foi modularizada no pacote update_dmi_tag/ (14
 #              modulos). Este arquivo preserva o comando de execucao
-#              historico -- "python3 update_dmi_tag.py [opcoes]" --
+#              historico, "python3 update_dmi_tag.py [opcoes]" --
 #              delegando para update_dmi_tag.__main__:main.
 #
 #              Estrutura esperada no diretorio de trabalho:
@@ -35,9 +35,9 @@
 # NOTES: Codificacao US-ASCII nos comentarios e codigo-fonte.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
+# COMPANY: SUSE, consultor BB
 #
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 #
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
@@ -48,6 +48,10 @@
 #                        completo de revisoes (REVISION) anterior a esta.
 # REVISION: 2026-07-06 - v2.1.9 - atualizacao do shim para nova versao de controle.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao do shim para nova versao de controle.
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao do shim para nova versao de controle.
 #
 # =======================================================================
 

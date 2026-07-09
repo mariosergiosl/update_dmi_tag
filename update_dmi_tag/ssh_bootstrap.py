@@ -20,9 +20,15 @@
 #              feliz (chave ja autorizada).
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -53,7 +59,7 @@ def _localiza_chave_ssh_local():
                  (privada, publica) do primeiro arquivo encontrado, ou
                  None nos dois se nenhuma existir.
     PARAMETER: nenhum
-    RETURNS: tuple(str, str) -- (caminho_privada, caminho_publica)
+    RETURNS: tuple(str, str), (caminho_privada, caminho_publica)
              ou (None, None) se nenhuma chave existir.
     """
     candidatas = (
@@ -75,7 +81,7 @@ def _gera_chave_ssh_local(caminho_log_local, verbose):
                  Usa ssh-keygen do sistema (parte do openssh-clients).
     PARAMETER: caminho_log_local - log local consolidado para registro
                verbose           - se True, imprime no stdout
-    RETURNS: tuple(str, str) -- (caminho_privada, caminho_publica) em sucesso,
+    RETURNS: tuple(str, str), (caminho_privada, caminho_publica) em sucesso,
              ou (None, None) em caso de falha.
     """
     diretorio_ssh = os.path.expanduser("~/.ssh")
@@ -150,7 +156,7 @@ def _resolve_ssh_pass(args):
                  (apenas retorna vazio); nao trava o fluxo.
     PARAMETER: args - namespace do argparse (deve ter ssh_pass e
                       ssh_pass_file, mesmo que vazios)
-    RETURNS: str -- senha SSH efetiva, ou string vazia.
+    RETURNS: str, senha SSH efetiva, ou string vazia.
     """
     if getattr(args, "ssh_pass", ""):
         return args.ssh_pass
@@ -195,7 +201,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
                caminho_chave_pub   - caminho da chave publica local
                caminho_log_local   - log local consolidado
                verbose             - se True, imprime no stdout
-    RETURNS: bool -- True se ssh-copy-id retornou rc=0, False caso
+    RETURNS: bool, True se ssh-copy-id retornou rc=0, False caso
              contrario (timeout, autenticacao falhou, binario ausente,
              etc.). Em falha, registra ERROR identificando a etapa.
     """
@@ -420,7 +426,7 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
                ssh_pass          - senha SSH efetiva (pode ser vazia)
                caminho_log_local - log local consolidado
                verbose           - se True, imprime no stdout
-    RETURNS: bool -- True se o host esta acessivel via chave apos o
+    RETURNS: bool, True se o host esta acessivel via chave apos o
              bootstrap. False indica falha definitiva (caller marca
              como INACESSIVEL).
     """

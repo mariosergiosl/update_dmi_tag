@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 *.pyo
 update_git.bash
+.claude/
+amidelnx_64
+*.log
+bb_repo.conf
+efi_boot/docs/
+efi_boot/dmi-atm/AMIDEEFIx64.EFI
+efi_boot/dmi-atm/bootx64_ANTIGO_problematico.efi

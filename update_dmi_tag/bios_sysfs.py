@@ -16,9 +16,15 @@
 #              script usa o Mecanismo 1 (amidelnx_64) automaticamente.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -54,7 +60,7 @@ def _carrega_modulo_amibios(caminho_log, verbose, suprime_tela,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool -- True se interface sysfs esta pronta
+    RETURNS: bool, True se interface sysfs esta pronta
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -150,7 +156,7 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
                suprime_tela      - suprime stdout
                dry_run           - se True, nao executa a gravacao
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool -- True se a gravacao foi bem-sucedida
+    RETURNS: bool, True se a gravacao foi bem-sucedida
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -237,7 +243,7 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
             return True
 
         _log("ERROR",
-             "amibios_dmi: integridade falhou -- esperado '{}', lido '{}'".format(
+             "amibios_dmi: integridade falhou, esperado '{}', lido '{}'".format(
                  tag, valor_novo))
         return False
 
@@ -271,7 +277,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                dry_run           - se True, nao executa a gravacao
                module_repo_url   - repo zypper (para instalacao futura)
                module_package    - pacote KMP (para instalacao futura)
-    RETURNS: bool -- True se a gravacao foi bem-sucedida
+    RETURNS: bool, True se a gravacao foi bem-sucedida
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -347,7 +353,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
         rc_w, stdout_w, stderr_w = _ssh(cmd_write, timeout=15)
         if "WRITE_ERROR" in stdout_w or rc_w != 0:
             _log("ERROR",
-                 "amibios_dmi remoto: falha na escrita -- {}".format(
+                 "amibios_dmi remoto: falha na escrita, {}".format(
                      stderr_w.strip()))
             return False
 
@@ -364,7 +370,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
             return True
 
         _log("ERROR",
-             "amibios_dmi remoto: integridade falhou -- esperado '{}', lido '{}'".format(
+             "amibios_dmi remoto: integridade falhou, esperado '{}', lido '{}'".format(
                  tag, valor_novo))
         return False
 

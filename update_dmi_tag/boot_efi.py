@@ -1,0 +1,527 @@
+# -*- coding: utf-8 -*-
+
+# =======================================================================
+#
+# FILE: boot_efi.py
+#
+# DESCRIPTION: Mecanismo 4 (experimental): grava o Chassis Asset Tag em
+#              pre-boot via AMIDEEFIx64.EFI rodando dentro de um UEFI
+#              Shell temporario, contornando o bloqueio de WSMT que
+#              impede os Mecanismos 1/2 em alguns modelos (Daten DH3UP,
+#              H4U02PER, ver constants.py, bloco COMPATIBILITY).
+#
+#              So acionado explicitamente via --allow-efi-fallback,
+#              independente de --write/--test-write, e so depois que os
+#              Mecanismos 1/2/3 ja falharam de verdade (FALHOU-todos) na
+#              tentativa real de gravacao. Nunca roda em --test-write:
+#              o --test-write existe para ser 100% seguro e reversivel,
+#              e este mecanismo reboota o equipamento, natureza de
+#              risco incompativel com essa garantia.
+#
+#              Fluxo:
+#                1. verifica_seguranca_efi_remoto, bateria de checagens
+#                   READ-ONLY (nunca escreve nada se qualquer uma falhar):
+#                   UEFI confirmado, efibootmgr presente, Secure Boot
+#                   inativo, sem criptografia de disco selada em TPM,
+#                   particao ESP montada/gravavel/com espaco livre,
+#                   sem colisao com entrada de boot existente.
+#                2. executa_boot_efi_remoto, so chamada se a checagem
+#                   acima passar. Copia os binarios para a ESP, gera o
+#                   startup.nsh com a tag real (so /CA, mesmo escopo do
+#                   restante do script), cria a entrada de boot, marca
+#                   BootNext, reinicia, espera o host voltar (timeout
+#                   configuravel) e confirma o valor gravado. Sempre limpa
+#                   a entrada de boot e os arquivos da ESP ao final,
+#                   sucesso ou falha.
+#
+#              Tudo aqui e read-only ate o passo 2 comecar a copiar
+#              arquivos, qualquer duvida de seguranca aborta ANTES de
+#              tocar em NVRAM ou na particao EFI.
+#
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.1.12
+# CREATED: 2026-07-08
+# REVISION: 2026-07-09 - v2.1.12 - corrige startup.nsh do Mecanismo 4
+#                        (faltava "cd" para o diretorio correto antes
+#                        de chamar o AMIDEEFIx64.EFI) e corrige risco de
+#                        loop de reboot infinito (efibootmgr --create
+#                        inseria a entrada temporaria na BootOrder
+#                        permanente, nao so no BootNext; agora a
+#                        BootOrder original e restaurada logo apos a
+#                        criacao da entrada). Validado em VM real, ver
+#                        Docs_Test_boot/.
+# REVISION: 2026-07-08 - v2.1.11 - criacao do modulo (Mecanismo 4,
+#                        experimental). Primeira versao: checagens de
+#                        seguranca + execucao completa do fluxo de boot
+#                        temporario. Ainda nao validado em hardware real
+#                        (aguardando testes em VM/equipamento fisico).
+#
+# =======================================================================
+
+import os
+import shlex
+import time
+
+from .constants import (
+    SegurancaEfiBloqueadaError,
+    DEFAULT_EFI_REMOTE_SUBDIR,
+    DEFAULT_ESP_MOUNT_POINT,
+    DEFAULT_EFI_BOOT_LABEL,
+    DEFAULT_EFI_MIN_FREE_KB,
+    DEFAULT_EFI_REBOOT_TIMEOUT,
+)
+from .logging_utils import gravar_log, gravar_log_remoto
+from .ssh_utils import ssh_run, testa_porta_ssh, testa_conexao_ssh, _scp_arquivo_com_erro
+
+
+def _fabrica_log(ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
+                  caminho_log_efi, verbose, suprime_tela):
+    """
+    NAME: _fabrica_log
+    DESCRIPTION: Cria a funcao _log usada por este modulo. Grava no log
+                 remoto do host + log local consolidado (via
+                 gravar_log_remoto, igual ao resto do pacote) e, se
+                 caminho_log_efi for informado, grava tambem nesse
+                 terceiro log dedicado ao Mecanismo 4, exigencia
+                 explicita de manter o resultado desse mecanismo visivel
+                 num arquivo proprio, alem dos logs normais.
+    PARAMETER: ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
+               caminho_log_efi, verbose, suprime_tela - ver assinatura das
+               funcoes publicas deste modulo
+    RETURNS: function, _log(nivel, msg)
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                          nivel, msg, caminho_log_local, verbose, suprime_tela)
+        if caminho_log_efi:
+            gravar_log(caminho_log_efi, nivel, "[{}] {}".format(ip, msg),
+                       verbose, False)
+    return _log
+
+
+def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                                    caminho_log_local, caminho_log_efi,
+                                    verbose, suprime_tela,
+                                    esp_mount_point=DEFAULT_ESP_MOUNT_POINT,
+                                    boot_label=DEFAULT_EFI_BOOT_LABEL,
+                                    min_free_kb=DEFAULT_EFI_MIN_FREE_KB):
+    """
+    NAME: verifica_seguranca_efi_remoto
+    DESCRIPTION: Bateria de checagens READ-ONLY que decide se e seguro
+                 tentar o Mecanismo 4 neste host. Nao escreve nada no
+                 host, todos os comandos remotos aqui sao leitura pura
+                 (ls, test -w, df, lsblk, mokutil, efibootmgr sem flags
+                 de escrita). Levanta SegurancaEfiBloqueadaError na
+                 primeira checagem que falhar, com o motivo especifico na
+                 mensagem; o chamador (host_processor/executa_boot_efi_remoto)
+                 captura e trata como "nao tentado por seguranca", nao
+                 como falha de mecanismo.
+    PARAMETER: ip, ssh_user, sudo_cmd    - identificacao/privilegio no host
+               caminho_log_remoto        - log remoto do host
+               caminho_log_local         - log local consolidado
+               caminho_log_efi           - log dedicado do Mecanismo 4
+               verbose, suprime_tela      - controle de saida
+               esp_mount_point            - ponto de montagem da ESP (default /boot/efi)
+               boot_label                 - label usado para checar colisao de entrada
+               min_free_kb                - espaco livre minimo exigido na ESP (KB)
+    RETURNS: None, levanta SegurancaEfiBloqueadaError se qualquer
+             checagem falhar. Retorno normal (sem excecao) significa
+             seguro para prosseguir.
+    """
+    _log = _fabrica_log(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                        caminho_log_local, caminho_log_efi, verbose, suprime_tela)
+
+    def _ssh(cmd, timeout=15):
+        rc, stdout, stderr = ssh_run(ip, ssh_user, cmd, timeout=timeout)
+        return rc, stdout.strip(), stderr.strip()
+
+    _log("INFO", "[MEC4] Iniciando checagem de seguranca do Mecanismo 4 (boot EFI).")
+
+    # 1. UEFI confirmado, sem UEFI, nao ha NVRAM de boot para usar.
+    rc, out, _ = _ssh("ls /sys/firmware/efi/efivars/ 2>/dev/null | head -1")
+    if rc != 0 or not out:
+        motivo = "Host nao esta em modo UEFI (Legacy BIOS); Mecanismo 4 nao se aplica."
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+    _log("INFO", "[MEC4] UEFI confirmado.")
+
+    # 2. efibootmgr precisa existir no host para criar/gerenciar a entrada.
+    rc, out, _ = _ssh("command -v efibootmgr 2>/dev/null")
+    if rc != 0 or not out:
+        motivo = "Binario efibootmgr nao encontrado no host."
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+    _log("INFO", "[MEC4] efibootmgr disponivel em: {}".format(out))
+
+    # 3. Secure Boot, maior risco conhecido. O AMIDEEFIx64.EFI/bootx64.efi
+    # nao sao assinados por uma cadeia de confianca reconhecida pelo host;
+    # com Secure Boot ativo, o firmware recusa executa-los. Nao ha
+    # alternativa segura e remota para contornar isso (MOK exige
+    # confirmacao fisica na tela, ver manual_operacao.md).
+    rc, out, _ = _ssh("mokutil --sb-state 2>/dev/null")
+    if rc == 0 and out:
+        if "enabled" in out.lower():
+            motivo = "Secure Boot ativo, binario EFI nao assinado seria recusado pelo firmware."
+            _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+            raise SegurancaEfiBloqueadaError(motivo)
+        _log("INFO", "[MEC4] Secure Boot: {}".format(out))
+    else:
+        # mokutil ausente ou sem retorno claro: nao assume seguranca por
+        # omissao. Aborta e exige verificacao manual.
+        motivo = ("Nao foi possivel confirmar o estado do Secure Boot (mokutil "
+                  "ausente ou sem retorno). Verificacao manual necessaria antes "
+                  "de tentar o Mecanismo 4 neste host.")
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+
+    # 4. TPM + criptografia de disco selada, o risco real nao e o TPM
+    # existir, e a chave de desbloqueio estar vinculada a medicoes de boot
+    # (PCR) que uma entrada de boot temporaria poderia alterar.
+    rc, out, _ = _ssh("ls /sys/class/tpm/ 2>/dev/null")
+    tpm_presente = (rc == 0 and bool(out))
+    _log("INFO", "[MEC4] TPM presente: {}".format("Sim" if tpm_presente else "Nao"))
+
+    if tpm_presente:
+        rc, out, _ = _ssh("lsblk -f 2>/dev/null | grep -i crypto_luks")
+        luks_presente = (rc == 0 and bool(out))
+        rc2, out2, _ = _ssh("grep -i tpm /etc/crypttab 2>/dev/null")
+        crypttab_tpm = (rc2 == 0 and bool(out2))
+        rc3, out3, _ = _ssh(
+            "command -v clevis >/dev/null 2>&1 && clevis luks list -d "
+            "$(lsblk -lnpo NAME,FSTYPE 2>/dev/null | awk '$2==\"crypto_LUKS\"{print $1; exit}') "
+            "2>/dev/null")
+        clevis_tpm = (rc3 == 0 and "tpm2" in out3.lower())
+
+        if luks_presente and (crypttab_tpm or clevis_tpm):
+            motivo = ("Disco com criptografia LUKS aparentemente selada em TPM "
+                      "(crypttab/clevis tpm2). Alterar o boot pode impedir o "
+                      "desbloqueio do disco. Verificacao manual necessaria.")
+            _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+            raise SegurancaEfiBloqueadaError(motivo)
+        if luks_presente:
+            _log("WARNING",
+                 "[MEC4] LUKS presente mas sem indicio de selagem em TPM "
+                 "(crypttab/clevis), prosseguindo, mas registre esta checagem.")
+
+    # 5. ESP montada e gravavel.
+    rc, out, _ = _ssh("mountpoint -q {} && echo MONTADA".format(shlex.quote(esp_mount_point)))
+    if rc != 0 or "MONTADA" not in out:
+        motivo = "Particao EFI ({}) nao esta montada.".format(esp_mount_point)
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+
+    rc, out, _ = _ssh("test -w {} && echo GRAVAVEL".format(shlex.quote(esp_mount_point)))
+    if rc != 0 or "GRAVAVEL" not in out:
+        motivo = "Particao EFI ({}) nao esta gravavel.".format(esp_mount_point)
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+    _log("INFO", "[MEC4] Particao EFI ({}) montada e gravavel.".format(esp_mount_point))
+
+    # 6. Espaco livre suficiente na ESP.
+    rc, out, _ = _ssh("df --output=avail -k {} 2>/dev/null | tail -1".format(
+        shlex.quote(esp_mount_point)))
+    try:
+        livre_kb = int(out.strip())
+    except (ValueError, AttributeError):
+        motivo = "Nao foi possivel determinar o espaco livre na particao EFI."
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+
+    if livre_kb < min_free_kb:
+        motivo = "Espaco livre na particao EFI insuficiente: {} KB livres, minimo exigido {} KB.".format(
+            livre_kb, min_free_kb)
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+    _log("INFO", "[MEC4] Espaco livre na ESP: {} KB (minimo exigido: {} KB).".format(
+        livre_kb, min_free_kb))
+
+    # 7. Sem colisao com entrada de boot ja existente com o mesmo label
+    # (por exemplo, sobra de uma execucao anterior que nao limpou direito).
+    rc, out, _ = _ssh("efibootmgr 2>/dev/null | grep -F {}".format(shlex.quote(boot_label)))
+    if rc == 0 and out:
+        motivo = ("Ja existe uma entrada de boot chamada '{}' na NVRAM deste host "
+                  "(possivel sobra de execucao anterior). Verifique manualmente "
+                  "com 'efibootmgr -v' antes de tentar de novo.").format(boot_label)
+        _log("ERROR", "[MEC4] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+
+    _log("INFO", "[MEC4] Checagem de seguranca APROVADA -- host elegivel para o Mecanismo 4.")
+
+
+def _detecta_disco_e_particao_esp(ip, ssh_user, esp_mount_point):
+    """
+    NAME: _detecta_disco_e_particao_esp
+    DESCRIPTION: Descobre o disco fisico e o numero da particao da ESP,
+                 nos formatos que efibootmgr --disk/--part exigem. Usa
+                 /sys/class/block/<particao>/partition para o numero
+                 (robusto contra qualquer esquema de nomenclatura --
+                 sda1, nvme0n1p1, etc., ao contrario de tentar extrair
+                 o numero do nome via regex).
+    PARAMETER: ip, ssh_user     - identificacao do host
+               esp_mount_point   - ponto de montagem da ESP
+    RETURNS: tuple(str, str), (disco, particao), ou (None, None) se nao
+             foi possivel determinar.
+    """
+    cmd = (
+        "ESP_SRC=$(findmnt -n -o SOURCE {esp}) && "
+        "ESP_BASE=$(basename \"$ESP_SRC\") && "
+        "DISK=$(lsblk -no pkname \"$ESP_SRC\" 2>/dev/null) && "
+        "PARTNUM=$(cat /sys/class/block/\"$ESP_BASE\"/partition 2>/dev/null) && "
+        "echo \"/dev/$DISK $PARTNUM\""
+    ).format(esp=shlex.quote(esp_mount_point))
+    rc, out, _ = ssh_run(ip, ssh_user, cmd, timeout=15)
+    if rc != 0 or not out.strip():
+        return None, None
+    partes = out.strip().split()
+    if len(partes) != 2:
+        return None, None
+    return partes[0], partes[1]
+
+
+def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
+                             caminho_log_remoto, caminho_log_local,
+                             caminho_log_efi):
+    """
+    NAME: executa_boot_efi_remoto
+    DESCRIPTION: Executa o Mecanismo 4 completo: checagem de seguranca,
+                 copia dos binarios para a ESP, geracao do startup.nsh
+                 (so /CA, mesmo escopo do restante do script), criacao
+                 da entrada de boot temporaria, reboot, espera pelo
+                 retorno do host (timeout configuravel) e confirmacao do
+                 valor gravado. Sempre tenta limpar a entrada de boot e os
+                 arquivos copiados na ESP ao final, em sucesso ou falha
+                 (a excecao e o caso TRAVADO-POS-REBOOT, onde a limpeza
+                 remota e impossivel por definicao).
+    PARAMETER: ip, ssh_user, sudo_cmd - identificacao/privilegio no host
+               tag                    - valor de 14 digitos a gravar (Chassis Asset Tag)
+               args                   - namespace do argparse (efi_local_dir,
+                                        efi_timeout, verbose, csv)
+               caminho_log_remoto     - log remoto do host
+               caminho_log_local      - log local consolidado
+               caminho_log_efi        - log dedicado do Mecanismo 4
+    RETURNS: str, "OK-efiboot", "BLOQUEADO-<motivo>" (seguranca reprovou,
+             nada foi tocado no host), "FALHOU-efiboot" (host voltou mas a
+             tag nao confere) ou "TRAVADO-POS-REBOOT" (host nao respondeu
+             via SSH dentro do timeout, requer intervencao fisica).
+    """
+    _log = _fabrica_log(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                        caminho_log_local, caminho_log_efi,
+                        args.verbose, args.csv)
+
+    def _ssh(cmd, timeout=15):
+        return ssh_run(ip, ssh_user, cmd, timeout=timeout)
+
+    esp = DEFAULT_ESP_MOUNT_POINT
+    label = DEFAULT_EFI_BOOT_LABEL
+    subdir = DEFAULT_EFI_REMOTE_SUBDIR
+    remoto_dir = "{}/EFI/{}".format(esp, subdir)
+
+    # 1. Checagem de seguranca, aborta ANTES de tocar em qualquer coisa
+    # se qualquer condicao nao for segura.
+    try:
+        verifica_seguranca_efi_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
+            caminho_log_efi, args.verbose, args.csv,
+            esp_mount_point=esp, boot_label=label)
+    except SegurancaEfiBloqueadaError as e:
+        return "BLOQUEADO-{}".format(str(e)[:60])
+
+    amide_local = os.path.join(args.efi_local_dir, "AMIDEEFIx64.EFI")
+    shell_local = os.path.join(args.efi_local_dir, "bootx64.efi")
+
+    if not os.path.isfile(amide_local) or not os.path.isfile(shell_local):
+        motivo = "Binarios do Mecanismo 4 nao encontrados em {}.".format(args.efi_local_dir)
+        _log("ERROR", "[MEC4] {}".format(motivo))
+        return "BLOQUEADO-{}".format(motivo[:60])
+
+    # 2. Cria o diretorio remoto e copia os binarios + startup.nsh gerado
+    # dinamicamente (so /CA, com a tag real deste host).
+    _log("INFO", "[MEC4] Preparando particao EFI remota em {}.".format(remoto_dir))
+    rc, _, stderr = _ssh("{} mkdir -p {}".format(sudo_cmd, shlex.quote(remoto_dir)))
+    if rc != 0:
+        motivo = "Falha ao criar diretorio remoto na ESP: {}".format(stderr.strip())
+        _log("ERROR", "[MEC4] {}".format(motivo))
+        return "FALHOU-efiboot"
+
+    sucesso, erro = _scp_arquivo_com_erro(
+        ip, ssh_user, amide_local, "{}/AMIDEEFIx64.EFI".format(remoto_dir))
+    if not sucesso:
+        _log("ERROR", "[MEC4] Falha ao copiar AMIDEEFIx64.EFI: {}".format(erro))
+        return "FALHOU-efiboot"
+
+    sucesso, erro = _scp_arquivo_com_erro(
+        ip, ssh_user, shell_local, "{}/bootx64.efi".format(remoto_dir))
+    if not sucesso:
+        _log("ERROR", "[MEC4] Falha ao copiar bootx64.efi: {}".format(erro))
+        return "FALHOU-efiboot"
+
+    # startup.nsh gerado dinamicamente, so /CA, mesmo escopo do restante
+    # do script (amidelnx_64/amibios_dmi tambem so tocam o Chassis Asset Tag).
+    # O "cd" e necessario porque o shell auto-executa o startup.nsh com o
+    # diretorio atual em FS0:\ (raiz da ESP), nao no diretorio onde o
+    # proprio startup.nsh esta (validado em VM real, ver Docs_Test_boot/).
+    conteudo_nsh = (
+        "echo -off\n"
+        "cd \\EFI\\{}\n"
+        "AMIDEEFIx64.EFI /CA \"{}\"\n"
+        "reset\n"
+    ).format(subdir, tag)
+    caminho_nsh_tmp = "{}.nsh_tmp_{}".format(caminho_log_local or "efi_boot", ip)
+    try:
+        with open(caminho_nsh_tmp, "w", encoding="ascii") as f:
+            f.write(conteudo_nsh)
+        sucesso, erro = _scp_arquivo_com_erro(
+            ip, ssh_user, caminho_nsh_tmp, "{}/startup.nsh".format(remoto_dir))
+    finally:
+        if os.path.isfile(caminho_nsh_tmp):
+            os.remove(caminho_nsh_tmp)
+    if not sucesso:
+        _log("ERROR", "[MEC4] Falha ao copiar startup.nsh: {}".format(erro))
+        return "FALHOU-efiboot"
+
+    _log("INFO", "[MEC4] Arquivos copiados para a ESP com sucesso.")
+
+    # 3. Descobre disco/particao da ESP e cria a entrada de boot.
+    disco, particao = _detecta_disco_e_particao_esp(ip, ssh_user, esp)
+    if not disco or not particao:
+        _log("ERROR", "[MEC4] Nao foi possivel determinar disco/particao da ESP.")
+        return "FALHOU-efiboot"
+    _log("INFO", "[MEC4] ESP em {} particao {}.".format(disco, particao))
+
+    # BootOrder original, capturada ANTES de criar a entrada temporaria,
+    # para restaurar logo em seguida (ver comentario abaixo sobre o
+    # risco de loop de reboot).
+    ordem_original = None
+    rc, out_ordem, _ = _ssh("{} efibootmgr".format(sudo_cmd))
+    if rc == 0:
+        for linha in out_ordem.splitlines():
+            if linha.strip().startswith("BootOrder:"):
+                ordem_original = linha.split(":", 1)[1].strip()
+                break
+
+    loader = r"\EFI\{}\bootx64.efi".format(subdir)
+    cmd_create = "{} efibootmgr --create --disk {} --part {} --label {} --loader '{}'".format(
+        sudo_cmd, shlex.quote(disco), shlex.quote(particao),
+        shlex.quote(label), loader)
+    rc, out, stderr = _ssh(cmd_create)
+    if rc != 0:
+        _log("ERROR", "[MEC4] Falha ao criar entrada de boot: {}".format(stderr.strip()))
+        return "FALHOU-efiboot"
+
+    boot_num = None
+    for linha in out.splitlines():
+        if label in linha and linha.strip().startswith("Boot"):
+            boot_num = linha.strip()[4:8]
+            break
+    if not boot_num:
+        _log("ERROR", "[MEC4] Entrada de boot criada, mas nao foi possivel identificar o numero (BootXXXX).")
+        _ssh("{} efibootmgr | grep -F {}".format(sudo_cmd, shlex.quote(label)))
+        return "FALHOU-efiboot"
+    _log("INFO", "[MEC4] Entrada de boot criada: Boot{}.".format(boot_num))
+
+    # IMPORTANTE: "efibootmgr --create" tambem insere a entrada nova na
+    # BootOrder (nao so no BootNext, que e de uso unico). Se a entrada
+    # ficar na BootOrder, QUALQUER reboot seguinte a este (inclusive o
+    # "reset" do proprio startup.nsh, independente de sucesso ou falha
+    # do AMIDEEFIx64.EFI) vai cair de novo nela, gerando um loop de
+    # reboot que nunca deixa o SO subir, entao o SSH nunca volta e a
+    # limpeza automatica (abaixo) nunca roda. Restaurar a BootOrder
+    # original aqui, sem a entrada nova, garante que so ESTE boot (via
+    # BootNext) use a entrada temporaria; qualquer reboot seguinte,
+    # por qualquer motivo, vai direto para o SO normal, mesmo que a
+    # limpeza nunca chegue a rodar. Validado em VM real (ver
+    # Docs_Test_boot/).
+    if ordem_original:
+        rc, _, stderr = _ssh("{} efibootmgr --bootorder {}".format(sudo_cmd, ordem_original))
+        if rc != 0:
+            _log("WARNING",
+                 "[MEC4] Nao foi possivel restaurar a BootOrder original ({}): {}. "
+                 "Risco de loop de reboot se a limpeza automatica falhar.".format(
+                     ordem_original, stderr.strip()))
+    else:
+        _log("WARNING",
+             "[MEC4] Nao foi possivel capturar a BootOrder original antes da "
+             "criacao da entrada. Risco de loop de reboot se a limpeza "
+             "automatica falhar.")
+
+    rc, _, stderr = _ssh("{} efibootmgr --bootnext {}".format(sudo_cmd, boot_num))
+    if rc != 0:
+        _log("ERROR", "[MEC4] Falha ao definir BootNext: {}".format(stderr.strip()))
+        _limpa_entrada_e_arquivos(ip, ssh_user, sudo_cmd, boot_num, remoto_dir, _log)
+        return "FALHOU-efiboot"
+    _log("INFO", "[MEC4] BootNext definido para Boot{}. Reiniciando o host...".format(boot_num))
+
+    # 4. Reinicia. A conexao SSH cai junto, isso e esperado, nao e erro.
+    _ssh("{} reboot".format(sudo_cmd), timeout=5)
+
+    # 5. Espera o host voltar, com timeout configuravel.
+    timeout = getattr(args, "efi_timeout", DEFAULT_EFI_REBOOT_TIMEOUT)
+    _log("INFO", "[MEC4] Aguardando o host voltar (timeout: {} s)...".format(timeout))
+    inicio = time.time()
+    voltou = False
+    # Da uma folga inicial para o host realmente cair antes de comecar a
+    # tentar reconectar (evita falso-positivo testando a conexao antiga).
+    time.sleep(15)
+    while time.time() - inicio < timeout:
+        if testa_porta_ssh(ip, timeout=3.0) and testa_conexao_ssh(ip, ssh_user):
+            voltou = True
+            break
+        time.sleep(10)
+
+    if not voltou:
+        _log("ERROR",
+             "[MEC4] ATENCAO, host nao respondeu via SSH em {} s apos o reboot. "
+             "Pode ter ficado preso no EFI Shell (BootNext nao consumido ou "
+             "startup.nsh travado). REQUER INTERVENCAO FISICA para verificar "
+             "e, se necessario, forcar o boot normal.".format(timeout))
+        return "TRAVADO-POS-REBOOT"
+
+    _log("INFO", "[MEC4] Host respondeu via SSH novamente apos o reboot.")
+
+    # 6. Confirma o valor gravado e limpa a entrada de boot + arquivos da ESP.
+    rc, tag_lida, _ = _ssh("{} dmidecode -s chassis-asset-tag 2>/dev/null".format(sudo_cmd))
+    tag_lida = tag_lida.strip()
+    _limpa_entrada_e_arquivos(ip, ssh_user, sudo_cmd, boot_num, remoto_dir, _log)
+
+    if rc == 0 and tag_lida == tag:
+        _log("INFO", "[MEC4] Tag confirmada apos reboot: '{}'.".format(tag_lida))
+        return "OK-efiboot"
+
+    _log("ERROR", "[MEC4] Tag apos reboot ('{}') nao confere com o esperado ('{}').".format(
+        tag_lida, tag))
+    return "FALHOU-efiboot"
+
+
+def _limpa_entrada_e_arquivos(ip, ssh_user, sudo_cmd, boot_num, remoto_dir, _log):
+    """
+    NAME: _limpa_entrada_e_arquivos
+    DESCRIPTION: Remove a entrada de boot temporaria da NVRAM e os
+                 arquivos copiados para a ESP. Melhor esforco, loga
+                 falhas mas nao interrompe o fluxo (o resultado principal
+                 do Mecanismo 4 ja foi decidido antes desta chamada).
+    PARAMETER: ip, ssh_user, sudo_cmd - identificacao/privilegio no host
+               boot_num                - numero da entrada (ex: "0005")
+               remoto_dir              - diretorio criado na ESP
+               _log                    - funcao de log ja fechada sobre o host
+    RETURNS: None
+    """
+    if boot_num:
+        rc, _, stderr = ssh_run(
+            ip, ssh_user, "{} efibootmgr -b {} -B".format(sudo_cmd, boot_num), timeout=15)
+        if rc != 0:
+            _log("WARNING",
+                 "[MEC4] Nao foi possivel remover a entrada de boot Boot{} "
+                 "automaticamente: {}. Remova manualmente com 'efibootmgr -b {} -B'.".format(
+                     boot_num, stderr.strip(), boot_num))
+        else:
+            _log("INFO", "[MEC4] Entrada de boot Boot{} removida.".format(boot_num))
+
+    rc, _, stderr = ssh_run(
+        ip, ssh_user, "{} rm -rf {}".format(sudo_cmd, shlex.quote(remoto_dir)), timeout=15)
+    if rc != 0:
+        _log("WARNING",
+             "[MEC4] Nao foi possivel remover {} da ESP automaticamente: {}.".format(
+                 remoto_dir, stderr.strip()))
+    else:
+        _log("INFO", "[MEC4] Arquivos temporarios removidos da ESP.")

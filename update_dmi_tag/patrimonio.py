@@ -14,9 +14,15 @@
 #              usada tanto no modo standalone quanto no remoto.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -47,7 +53,7 @@ def calcula_dv_modulo11(base_num):
                  esquerda: 2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5, 6.
                  Se o resultado for 10 ou 11, retorna "0".
     PARAMETER: base_num - string numerica de 13 digitos
-    RETURNS: str -- digito verificador ("0" a "9")
+    RETURNS: str, digito verificador ("0" a "9")
     """
     pesos = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
     soma = sum(int(d) * p for d, p in zip(base_num, pesos))
@@ -70,7 +76,7 @@ def valida_via_patrimonial_cli(base_num, caminho_log, verbose, suprime_tela,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: str -- 14 digitos ou string vazia
+    RETURNS: str, 14 digitos ou string vazia
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -110,7 +116,7 @@ def valida_e_calcula_tag(valor_config, caminho_log, verbose, suprime_tela,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: tuple(str, str) -- (tag_esperada_14d, base_13d)
+    RETURNS: tuple(str, str), (tag_esperada_14d, base_13d)
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,

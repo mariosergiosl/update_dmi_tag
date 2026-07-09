@@ -10,9 +10,15 @@
 #              comentarios em fim de linha.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -44,7 +50,7 @@ def le_arquivo_hosts(caminho_hosts):
                      (ex: "192.168.1.10 # equip-01" -> processa apenas o IP)
                  Retorna lista de tuplas (ip, bem_numero_ou_vazio).
     PARAMETER: caminho_hosts - caminho do arquivo de hosts
-    RETURNS: list of tuple(str, str) -- [(ip, bem_numero), ...]
+    RETURNS: list of tuple(str, str), [(ip, bem_numero), ...]
     """
     if not os.path.isfile(caminho_hosts):
         sys.stderr.write("ERRO: arquivo de hosts nao encontrado: {}\n".format(

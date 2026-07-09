@@ -15,8 +15,14 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - cmd_remoto em executa_amidelnx_remoto
 #                        passa a escapar o valor da tag com shlex.quote.
 #                        Sem isso, valores com espaco (todas as tags virgens:
@@ -59,7 +65,7 @@ def _parse_resultado_amide(stdout, stderr):
                  "N - Error: mensagem". Retorna tupla (sucesso, detalhe).
     PARAMETER: stdout - saida padrao do processo amidelnx_64
                stderr - saida de erro do processo
-    RETURNS: tuple(bool, str) -- (sucesso, mensagem_de_detalhe)
+    RETURNS: tuple(bool, str), (sucesso, mensagem_de_detalhe)
     """
     saida_completa = (stdout + " " + stderr).strip()
 
@@ -99,7 +105,7 @@ def executa_amidelnx_local(tag, caminho_amide, sudo_cmd_lista,
                suprime_tela      - suprime stdout
                dry_run           - se True, nao executa a gravacao
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool -- True se a gravacao foi bem-sucedida
+    RETURNS: bool, True se a gravacao foi bem-sucedida
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -171,7 +177,7 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
                dry_run            - se True, nao executa a gravacao
                amide_repo_url     - repo zypper (reservado para uso futuro)
                amide_package      - pacote zypper (reservado para uso futuro)
-    RETURNS: bool -- True se a gravacao foi bem-sucedida
+    RETURNS: bool, True se a gravacao foi bem-sucedida
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,

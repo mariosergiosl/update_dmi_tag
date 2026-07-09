@@ -16,9 +16,15 @@
 #              "modulo inserido no kernel" de "interface SMI respondendo".
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -77,7 +83,7 @@ def _le_smbios_local():
                  do kernel, sem dmidecode. Suporta ancora de 64 bits
                  (_SM3_, SMBIOS 3.x) e de 32 bits (_SM_, SMBIOS 2.x).
     PARAMETER: nenhum
-    RETURNS: str -- versao no formato "X.Y.Z" ou "DESCONHECIDO"
+    RETURNS: str, versao no formato "X.Y.Z" ou "DESCONHECIDO"
     """
     try:
         with open("/sys/firmware/dmi/tables/smbios_entry_point", "rb") as f:
@@ -96,7 +102,7 @@ def _detecta_wsmt_local():
     NAME: _detecta_wsmt_local
     DESCRIPTION: Verifica presenca de WSMT no dmesg local.
     PARAMETER: nenhum
-    RETURNS: tuple(bool, str) -- (wsmt_presente, linha_dmesg_ou_vazio)
+    RETURNS: tuple(bool, str), (wsmt_presente, linha_dmesg_ou_vazio)
     """
     try:
         resultado = subprocess.run(
@@ -125,7 +131,7 @@ def _le_mac_local():
                  sem dependencias externas). Ignora MACs zerados
                  (00:00:00:00:00:00) e valores ausentes/invalidos.
     PARAMETER: nenhum
-    RETURNS: str -- MACs separados por virgula, ex: "aa:bb:cc:dd:ee:ff,11:22:33:44:55:66"
+    RETURNS: str, MACs separados por virgula, ex: "aa:bb:cc:dd:ee:ff,11:22:33:44:55:66"
              ou "DESCONHECIDO" se nenhuma interface valida for encontrada.
     """
     prefixos_excluir = ("lo", "docker", "veth", "br-", "virbr", "vlan",
@@ -170,7 +176,7 @@ def _le_mac_remoto(ip, ssh_user, fn_ssh):
                           comando no host remoto e retorna stdout limpo
                           (equivalente ao _ssh() local de
                           coletar_dados_ambiente_remoto)
-    RETURNS: str -- MACs separados por virgula, ex: "aa:bb:cc:dd:ee:ff (eth0)"
+    RETURNS: str, MACs separados por virgula, ex: "aa:bb:cc:dd:ee:ff (eth0)"
              ou "DESCONHECIDO" se nenhuma interface valida for encontrada.
     """
     # Coleta lista de interfaces e MACs em um unico comando ssh para
@@ -217,7 +223,7 @@ def coletar_dados_ambiente(caminho_log, verbose, suprime_tela, caminho_log_local
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional, modo remoto)
-    RETURNS: dict -- dicionario com os dados coletados
+    RETURNS: dict, dicionario com os dados coletados
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -283,7 +289,7 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
                caminho_log_local - log consolidado local
                verbose           - modo verbose
                suprime_tela      - suprime stdout
-    RETURNS: dict -- dicionario com os dados coletados
+    RETURNS: dict, dicionario com os dados coletados
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -323,7 +329,7 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
 
     import re as _re
 
-    # SMBIOS version -- cascata de 3 tentativas para compatibilidade
+    # SMBIOS version, cascata de 3 tentativas para compatibilidade
     # com equipamentos antigos (Legacy BIOS, pre-UEFI):
     #   1. dmidecode completo filtrando linhas de ruido (funciona nos Daten)
     #   2. dmidecode -t 0 (type 0 = BIOS info, menos verboso, evita ruido)
@@ -345,7 +351,7 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
             dados["smbios_version"] = m2.group(1)
             _log("DEBUG", "SMBIOS Ver (via dmidecode -t 0): {}".format(dados["smbios_version"]))
         else:
-            # Tentativa 3: sysfs -- /sys/firmware/dmi/tables/DMI nao e legivel
+            # Tentativa 3: sysfs, /sys/firmware/dmi/tables/DMI nao e legivel
             # diretamente, mas /sys/class/dmi/id/ tem bios_version como indicativo
             smbios_sys = _ssh("cat /sys/class/dmi/id/product_version 2>/dev/null")
             if smbios_sys and smbios_sys != "DESCONHECIDO" and smbios_sys.strip() not in ("", "None", "To Be Filled By O.E.M."):
@@ -363,12 +369,12 @@ def coletar_dados_ambiente_remoto(ip, ssh_user, sudo_cmd, caminho_log,
         dados["wsmt"]         = "Ausente"
         dados["wsmt_detalhe"] = ""
 
-    # Asset tag atual -- cascata de 2 tentativas:
+    # Asset tag atual, cascata de 2 tentativas:
     #   1. dmidecode -s chassis-asset-tag com sudo (precisa de privilegio,
     #      funciona em todos os modelos com dmidecode moderno)
     #   2. /sys/class/dmi/id/chassis_asset_tag via sysfs (sem sudo,
     #      funciona em equipamentos Legacy BIOS sem suporte a dmidecode
-    #      moderno -- ex: Gigabyte H81M, PERTOSA GA-H81M)
+    #      moderno, ex: Gigabyte H81M, PERTOSA GA-H81M)
     tag_dmidecode = _ssh_sudo("dmidecode -s chassis-asset-tag")
     if tag_dmidecode and tag_dmidecode != "DESCONHECIDO":
         dados["tag_atual"] = tag_dmidecode

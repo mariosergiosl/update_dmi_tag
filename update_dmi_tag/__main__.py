@@ -30,8 +30,18 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-05-29
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - adiciona --allow-efi-fallback,
+#                        --efi-local-dir, --efi-timeout e --log-efi
+#                        (Mecanismo 4, experimental, ver boot_efi.py).
+#                        Validacao dura dos binarios quando a flag e usada,
+#                        confirmacao interativa obrigatoria (aborta com
+#                        RC_SAFETY_ABORT se nao houver terminal ou o
+#                        operador recusar).
 # REVISION: 2026-07-07 - v2.1.10 - RC do modo remoto passa a considerar
 #                        teste_escrita == "RESTORE-FALHOU" como falha (retorna
 #                        1), alem do criterio existente de "resultado". Ver
@@ -97,9 +107,10 @@ from .constants import (
     DEFAULT_AMIDE_REMOTE_PATH, DEFAULT_AMIDE_PACKAGE, DEFAULT_AMIDE_REPO_URL,
     DEFAULT_SYSFS_TARGET, DEFAULT_MODULE_REPO_URL, DEFAULT_MODULE_PACKAGE,
     DEFAULT_SSH_USER,
+    DEFAULT_EFI_LOCAL_DIR, DEFAULT_EFI_REBOOT_TIMEOUT, DEFAULT_EFI_LOG_FILE,
     PatrimonioPendenteError, TodosMecanismosFalharam,
     RC_OK, RC_FILE_NOT_FOUND, RC_PERMISSION_ERROR, RC_VALIDATION_ERROR,
-    RC_ALL_MECHANISMS_FAILED, RC_PATRIMONIO_PENDENTE, RC_UNKNOWN_ERROR,
+    RC_ALL_MECHANISMS_FAILED, RC_SAFETY_ABORT, RC_PATRIMONIO_PENDENTE, RC_UNKNOWN_ERROR,
 )
 from .logging_utils import gravar_log
 from .ssh_bootstrap import _resolve_ssh_pass
@@ -136,7 +147,7 @@ def main():
                  determina o modo de execucao (standalone ou remoto) e
                  delega para o fluxo correspondente.
     PARAMETER: nenhum
-    RETURNS: int -- codigo de saida
+    RETURNS: int, codigo de saida
     """
     # Caminho local padrao do amidelnx_64 (para scp em modo remoto):
     # diretorio de trabalho atual, onde o shim update_dmi_tag.py e
@@ -248,6 +259,50 @@ def main():
             DEFAULT_MODULE_PACKAGE),
     )
 
+    # --- Mecanismo 4: boot EFI temporario (experimental) ---
+    parser.add_argument(
+        "--allow-efi-fallback",
+        action="store_true",
+        dest="allow_efi_fallback",
+        help=(
+            "EXPERIMENTAL. Habilita o Mecanismo 4 (reboot unico via UEFI "
+            "Shell + AMIDEEFIx64.EFI) para hosts onde os Mecanismos 1/2/3 "
+            "falharem numa gravacao real (-w). Independente de --write/"
+            "--test-write: sozinho ja autoriza o reboot fisico se houver "
+            "algo a corrigir, mas so tem efeito quando -w tambem estiver "
+            "presente (sem -w, os mecanismos diretos nunca sao realmente "
+            "testados, entao nao ha FALHOU-todos para acionar o Mecanismo 4). "
+            "Pede confirmacao interativa antes de iniciar; recusa aborta a "
+            "execucao inteira. NAO pode ser usado sem terminal interativo."
+        ),
+    )
+    parser.add_argument(
+        "--efi-local-dir",
+        default=None,
+        dest="efi_local_dir",
+        help=(
+            "Pasta local com AMIDEEFIx64.EFI e bootx64.efi para o Mecanismo 4 "
+            "(padrao: ./efi_boot/dmi-atm). So usado com --allow-efi-fallback."
+        ),
+    )
+    parser.add_argument(
+        "--efi-timeout",
+        type=int,
+        default=DEFAULT_EFI_REBOOT_TIMEOUT,
+        dest="efi_timeout",
+        help=(
+            "Segundos aguardando o host reconectar via SSH apos o reboot do "
+            "Mecanismo 4 antes de declarar TRAVADO-POS-REBOOT (padrao: {}).".format(
+                DEFAULT_EFI_REBOOT_TIMEOUT)
+        ),
+    )
+    parser.add_argument(
+        "--log-efi",
+        default=DEFAULT_EFI_LOG_FILE,
+        dest="log_efi",
+        help="Log dedicado do Mecanismo 4 (padrao: {})".format(DEFAULT_EFI_LOG_FILE),
+    )
+
     # --- Log ---
     parser.add_argument(
         "--log-file",
@@ -344,7 +399,7 @@ def main():
             sys.stderr.write("Erro: binario do Amide local nao encontrado: {}\n".format(args.amide_local_path))
             sys.exit(RC_FILE_NOT_FOUND)
 
-        # Nao foi informado -- e apenas um chute de conveniencia. Nao trava
+        # Nao foi informado, e apenas um chute de conveniencia. Nao trava
         # a execucao inteira por isso: avisa e, se houver terminal
         # interativo, pergunta antes de prosseguir. Sem terminal (chamado
         # por outro script, pipe, etc.), segue automaticamente apos avisar,
@@ -378,6 +433,43 @@ def main():
                        "Execucao nao-interativa detectada (sem terminal): "
                        "prosseguindo automaticamente.",
                        args.verbose, False)
+
+    # --allow-efi-fallback: validacao dura (arquivos precisam existir,
+    # sempre, e uma flag explicita, sem valor de conveniencia como o
+    # --amide-local-path) + confirmacao interativa obrigatoria, porque
+    # esta flag pode causar reboot fisico de equipamentos em producao.
+    # Diferente do aviso do binario Amide (baixo risco, segue sozinho sem
+    # terminal), aqui a ausencia de terminal ABORTA sempre: ninguem deve
+    # conseguir disparar reboots em lote sem um humano confirmando.
+    if getattr(args, "allow_efi_fallback", False):
+        if not args.efi_local_dir:
+            args.efi_local_dir = DEFAULT_EFI_LOCAL_DIR
+
+        amide_efi = os.path.join(args.efi_local_dir, "AMIDEEFIx64.EFI")
+        shell_efi = os.path.join(args.efi_local_dir, "bootx64.efi")
+        if not os.path.isfile(amide_efi) or not os.path.isfile(shell_efi):
+            sys.stderr.write(
+                "Erro: --allow-efi-fallback exige AMIDEEFIx64.EFI e bootx64.efi "
+                "em '{}'.\n".format(args.efi_local_dir))
+            sys.exit(RC_FILE_NOT_FOUND)
+
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            sys.stderr.write(
+                "Erro: --allow-efi-fallback exige confirmacao interativa (pode "
+                "reiniciar equipamentos em producao) e nao ha terminal disponivel "
+                "nesta execucao. Rode manualmente, num terminal, para usar esta "
+                "flag.\n")
+            sys.exit(RC_SAFETY_ABORT)
+
+        sys.stderr.write(
+            "AVISO: --allow-efi-fallback esta ativo. Isso vai REINICIAR "
+            "fisicamente os equipamentos da lista que precisarem do Mecanismo "
+            "4 (os 3 mecanismos diretos ja tiverem falhado numa gravacao real "
+            "com -w). Isso vai reiniciar as maquinas da lista. Voce tem certeza? [s/N]: ")
+        resposta = input().strip().lower()
+        if resposta not in ("s", "sim", "y", "yes"):
+            sys.stderr.write("Execucao cancelada.\n")
+            sys.exit(RC_SAFETY_ABORT)
 
     # Em modo remoto, se --log-file nao foi passado explicitamente,
     # redireciona para arquivo local (evita Permission denied em /var/log).
@@ -418,7 +510,7 @@ def main():
             gravar_log(args.log_local, nivel, msg, args.verbose, False)
 
         _log_local("INFO", "=" * 70)
-        _log_local("INFO", "update_dmi_tag.py v{} -- MODO REMOTO".format(
+        _log_local("INFO", "update_dmi_tag.py v{}, MODO REMOTO".format(
             SCRIPT_VERSION))
         _log_local("INFO", "Inicio: {}".format(
             time.strftime("%Y-%m-%d %H:%M:%S")))
@@ -431,7 +523,7 @@ def main():
         if args.write:
             modo_desc = "GRAVACAO REAL"
         else:
-            modo_desc = "DRY-RUN (simulacao -- sem gravacao na BIOS)"
+            modo_desc = "DRY-RUN (simulacao, sem gravacao na BIOS)"
         if getattr(args, "test_write", False):
             modo_desc += " + TEST-WRITE (rewrite no-op para validar compatibilidade)"
         _log_local("INFO", "Modo  : {}".format(modo_desc))
@@ -515,7 +607,7 @@ def main():
     if args.write:
         _modo_standalone = "GRAVACAO REAL"
     else:
-        _modo_standalone = "DRY-RUN (simulacao -- sem gravacao na BIOS)"
+        _modo_standalone = "DRY-RUN (simulacao, sem gravacao na BIOS)"
     if getattr(args, "test_write", False):
         _modo_standalone += " + TEST-WRITE (rewrite no-op para validar compatibilidade)"
     gravar_log(args.log_file, "INFO",

@@ -14,9 +14,15 @@
 #              imutavel (chattr +i, melhor esforco) e rollback em falha.
 #
 # AUTHOR: Mario Luz
-# COMPANY: SUSE -- consultor BB
-# VERSION: 2.1.10
+# COMPANY: SUSE, consultor BB
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -54,7 +60,7 @@ def le_valor_configuracao(caminho_config, nome_var, caminho_log, verbose,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: str -- valor extraido
+    RETURNS: str, valor extraido
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -105,7 +111,7 @@ def le_valor_configuracao_remoto(ip, ssh_user, caminho_config, nome_var,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                sudo_cmd          - prefixo sudo (opcional, para arquivos restritos)
-    RETURNS: str -- valor encontrado no arquivo remoto ou string vazia
+    RETURNS: str, valor encontrado no arquivo remoto ou string vazia
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -149,7 +155,7 @@ def _nome_backup_bbconfig(caminho_config, identificador):
                  local) permite auditar quem gerou o backup e quando.
     PARAMETER: caminho_config - caminho do arquivo original
                identificador  - usuario a incluir no nome (sem espacos)
-    RETURNS: str -- caminho completo do arquivo de backup
+    RETURNS: str, caminho completo do arquivo de backup
     """
     timestamp = time.strftime("%Y-%m-%d_%H%M%S")
     ident = "".join(c for c in identificador if c.isalnum() or c in "._-") or "unknown"
@@ -193,7 +199,7 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
                caminho_log_local - log consolidado local
                verbose           - modo verbose
                suprime_tela      - suprime stdout
-    RETURNS: dict -- {"sincronizado": bool, "backup": str ou None,
+    RETURNS: dict, {"sincronizado": bool, "backup": str ou None,
                        "motivo": str}
              motivo e um codigo curto: "IGUAL", "OK", "SEM-ARQUIVO",
              "FALHOU-backup", "FALHOU-chattr-ok-mesmo-assim",
@@ -204,7 +210,7 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
                           caminho_log_local, verbose, suprime_tela)
 
-    # 1. Ja sincronizado -- nada a fazer
+    # 1. Ja sincronizado, nada a fazer
     if bem_conf and bem_conf == bem_usado:
         _log("DEBUG", "BBconfig.conf ja sincronizado ({}={}).".format(
             nome_var, bem_usado))
@@ -326,7 +332,7 @@ def _rollback_bbconfig(ip, ssh_user, sudo_cmd, caminho_config, backup_path,
                chattr_ok    - se o chattr +i do backup havia funcionado
                motivo_base  - prefixo do motivo de falha original
                _log         - funcao de log fechada sobre o contexto
-    RETURNS: dict -- {"sincronizado": False, "backup": backup_path,
+    RETURNS: dict, {"sincronizado": False, "backup": backup_path,
                        "motivo": "<motivo_base>-rollback-ok"
                                   ou "<motivo_base>-rollback-falhou"}
     """
@@ -380,7 +386,7 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: dict -- mesmo formato de sincroniza_bbconfig_remoto
+    RETURNS: dict, mesmo formato de sincroniza_bbconfig_remoto
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,

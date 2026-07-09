@@ -17,14 +17,24 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - tenta_escrever_tag_remoto passa a
+#                        acionar o Mecanismo 4 (boot_efi.py) quando os
+#                        Mecanismos 1/2 falharem numa gravacao real (nao
+#                        dry-run) E --allow-efi-fallback estiver ativo.
+#                        Import local (dentro da funcao) para evitar
+#                        qualquer custo/dependencia quando a flag nao e
+#                        usada. Nunca acionado a partir de --test-write.
 # REVISION: 2026-07-07 - v2.1.10 - corrige falha silenciosa na restauracao
 #                        da tag virgem em tenta_teste_escrita_remoto: o
 #                        resultado da cascata de restauracao era descartado,
 #                        entao uma restauracao que falhasse (ex. timeout de
 #                        SSH, ver bios_amidelnx.py) nunca aparecia para o
-#                        operador -- a funcao sempre retornava o resultado
+#                        operador, a funcao sempre retornava o resultado
 #                        do teste original (ex. "OK-amidelnx"), mesmo com a
 #                        BIOS deixada com o valor de teste em vez do valor
 #                        virgem. Agora o resultado da restauracao e
@@ -75,7 +85,7 @@ def tenta_escrever_tag_local(tag, args, kmp_instalado,
     """
     NAME: tenta_escrever_tag_local
     DESCRIPTION: Cascata de mecanismos local. Retorna string descritiva.
-    RETURNS: str -- resultado descritivo
+    RETURNS: str, resultado descritivo
     """
     def _log(nivel, msg):
         gravar_log(args.log_file, nivel, msg, args.verbose, args.csv,
@@ -121,7 +131,7 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
     """
     NAME: tenta_escrever_tag_remoto
     DESCRIPTION: Cascata de mecanismos remota. Retorna string descritiva.
-    RETURNS: str -- resultado descritivo
+    RETURNS: str, resultado descritivo
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
@@ -162,6 +172,19 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
 
     if not dry_run:
         _log("ERROR", "Todos os mecanismos falharam para tag '{}' em {}.".format(tag, ip))
+
+        if getattr(args, "allow_efi_fallback", False):
+            # Import local: boot_efi.py e um modulo experimental, isolado do
+            # restante da cascata; so e importado quando a flag e usada.
+            from .boot_efi import executa_boot_efi_remoto
+            _log("WARNING",
+                 "Mecanismos 1/2 falharam, tentando Mecanismo 4 (boot EFI). "
+                 "Ver log dedicado: {}".format(getattr(args, "log_efi", "")))
+            return executa_boot_efi_remoto(
+                ip, ssh_user, sudo_cmd, tag, args,
+                caminho_log_remoto, caminho_log_local,
+                getattr(args, "log_efi", ""))
+
     return "FALHOU-todos"
 
 
@@ -196,9 +219,9 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                bem_usado         - BEM_NUMERO calculado (14 digitos),
                                    usado como valor de teste quando a
                                    tag atual for virgem (opcional)
-    RETURNS: str -- "OK-amidelnx", "OK-amibios", "FALHOU-todos",
+    RETURNS: str, "OK-amidelnx", "OK-amibios", "FALHOU-todos",
              "RESTORE-FALHOU" (teste gravou com sucesso mas a restauracao do
-             valor virgem original falhou -- a BIOS deste host permanece com
+             valor virgem original falhou, a BIOS deste host permanece com
              o valor de teste, requer correcao manual), "TAG-VIRGEM"
              (obsoleto, mantido para compatibilidade) ou "TAG-DESCONH"
     """
@@ -220,7 +243,7 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
             )
             if sucesso:
                 _log("INFO",
-                     "[TEST-WRITE] Mecanismo 1 OK -- modelo compativel "
+                     "[TEST-WRITE] Mecanismo 1 OK, modelo compativel "
                      "com amidelnx_64.")
                 return "OK-amidelnx", True
             _log("WARNING",
@@ -240,7 +263,7 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
             )
             if sucesso:
                 _log("INFO",
-                     "[TEST-WRITE] Mecanismo 2 OK -- modelo compativel "
+                     "[TEST-WRITE] Mecanismo 2 OK, modelo compativel "
                      "via amibios_dmi.")
                 return "OK-amibios", True
             _log("ERROR", "[TEST-WRITE] Mecanismo 2 tambem falhou.")
@@ -249,22 +272,22 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                  "[TEST-WRITE] Mecanismo 2 indisponivel: {}".format(e))
 
         _log("ERROR",
-             "[TEST-WRITE] Ambos os mecanismos falharam -- modelo "
+             "[TEST-WRITE] Ambos os mecanismos falharam, modelo "
              "incompativel ou binario ausente.")
         return "FALHOU-todos", False
 
-    # 1. Tag DESCONHECIDA -- nao ha valor para testar
+    # 1. Tag DESCONHECIDA, nao ha valor para testar
     if not tag_atual or tag_atual == "DESCONHECIDO":
         _log("WARNING",
-             "[TEST-WRITE] Tag atual DESCONHECIDA -- teste de escrita pulado.")
+             "[TEST-WRITE] Tag atual DESCONHECIDA, teste de escrita pulado.")
         return "TAG-DESCONH"
 
-    # 2. Tag VIRGEM -- usa BEM_NUMERO ou "O.E.M." como valor de teste
+    # 2. Tag VIRGEM, usa BEM_NUMERO ou "O.E.M." como valor de teste
     if tag_atual.strip() in _TAGS_VIRGEM:
         tag_teste  = bem_usado.strip() if bem_usado and bem_usado.strip() else "O.E.M."
         tag_restore = tag_atual.strip()
         _log("INFO",
-             "[TEST-WRITE] Tag virgem ('{}') -- testando com '{}' "
+             "[TEST-WRITE] Tag virgem ('{}'), testando com '{}' "
              "e restaurando ao final.".format(tag_restore, tag_teste))
         resultado, gravou = _executa_cascata(tag_teste)
         if gravou:
@@ -282,7 +305,7 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                 # falha de restauracao pode ter outras causas (rede, sudo,
                 # etc.) e precisa continuar visivel sempre que ocorrer.
                 _log("ERROR",
-                     "[TEST-WRITE] ATENCAO -- restauracao da tag virgem "
+                     "[TEST-WRITE] ATENCAO, restauracao da tag virgem "
                      "FALHOU. A BIOS deste host permanece gravada com o "
                      "valor de teste '{}' em vez do valor virgem original "
                      "'{}'. Corrija manualmente assim que possivel (ex.: "
@@ -291,7 +314,7 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                 return "RESTORE-FALHOU"
         return resultado
 
-    # 3. Tag conhecida -- rewrite no-op direto
+    # 3. Tag conhecida, rewrite no-op direto
     _log("INFO",
          "[TEST-WRITE] Iniciando rewrite no-op com tag atual: "
          "'{}'".format(tag_atual))

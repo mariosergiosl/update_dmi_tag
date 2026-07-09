@@ -16,8 +16,17 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.10
+# VERSION: 2.1.12
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo (boot_efi.py
+#                        passa a reaproveitar ssh_run/testa_porta_ssh/
+#                        testa_conexao_ssh/_scp_arquivo_com_erro deste
+#                        modulo).
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
 #                        mudanca funcional neste arquivo.
@@ -55,7 +64,7 @@ def ssh_run(ip, ssh_user, comando, timeout=30):
                ssh_user - usuario SSH
                comando  - string de comando a executar no shell remoto
                timeout  - timeout em segundos (padrao: 30)
-    RETURNS: tuple(int, str, str) -- (returncode, stdout, stderr)
+    RETURNS: tuple(int, str, str), (returncode, stdout, stderr)
     """
     try:
         resultado = subprocess.run(
@@ -80,7 +89,7 @@ def testa_conexao_ssh(ip, ssh_user):
                  Usa timeout reduzido (5 s) para nao bloquear a listagem.
     PARAMETER: ip       - endereco IP do host remoto
                ssh_user - usuario SSH
-    RETURNS: bool -- True se acessivel
+    RETURNS: bool, True se acessivel
     """
     rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=5)
     return rc == 0
@@ -94,7 +103,7 @@ def testa_porta_ssh(ip, porta=22, timeout=2.0):
     PARAMETER: ip      - endereco IP do host
                porta   - porta TCP (padrao: 22)
                timeout - tempo limite em segundos (padrao: 2.0)
-    RETURNS: bool -- True se conexao estabelecida, False caso contrario
+    RETURNS: bool, True se conexao estabelecida, False caso contrario
     """
     try:
         with socket.create_connection((ip, porta), timeout=timeout):
@@ -112,7 +121,7 @@ def _filtra_banner(texto):
                  Cobre o banner completo incluindo continuacoes
                  e pedido de senha do sudo.
     PARAMETER: texto - string de saida do comando remoto
-    RETURNS: str -- texto sem as linhas do banner
+    RETURNS: str, texto sem as linhas do banner
     """
     MARCADORES = (
         "Sistema de Autenticacao", "BBBBBBBB", "UTILIZE CHAVE",
@@ -156,7 +165,7 @@ def detecta_sudo(ip, ssh_user, sudo_pass=""):
 
                  IMPORTANTE: retorna TUPLA (prefixo_sudo, confirmado).
                  - prefixo_sudo: string a prefixar nos comandos privilegiados
-                 - confirmado: bool -- True se o privilegio foi verificado,
+                 - confirmado: bool, True se o privilegio foi verificado,
                    False se sudo nao esta disponivel ou a senha falhou.
                  Quando confirmado=False o chamador DEVE logar WARNING e
                  decidir se prossegue ou aborta o processamento do host.
@@ -164,7 +173,7 @@ def detecta_sudo(ip, ssh_user, sudo_pass=""):
     PARAMETER: ip        - endereco IP do host remoto
                ssh_user  - usuario SSH
                sudo_pass - senha do sudo (opcional)
-    RETURNS: tuple(str, bool) -- (prefixo_sudo, confirmado)
+    RETURNS: tuple(str, bool), (prefixo_sudo, confirmado)
     """
     # Tentativa 1: sudo sem senha
     rc, _, _ = ssh_run(ip, ssh_user, "sudo -n true 2>/dev/null", timeout=10)
@@ -200,7 +209,7 @@ def scp_arquivo(ip, ssh_user, caminho_local, caminho_remoto):
                ssh_user       - usuario SSH
                caminho_local  - caminho do arquivo de origem (local)
                caminho_remoto - caminho de destino no host remoto
-    RETURNS: bool -- True se a copia foi bem-sucedida
+    RETURNS: bool, True se a copia foi bem-sucedida
     """
     try:
         resultado = subprocess.run(
@@ -238,7 +247,7 @@ def _scp_arquivo_com_erro(ip, ssh_user, caminho_local, caminho_remoto):
                ssh_user       - usuario SSH
                caminho_local  - caminho do arquivo de origem (local)
                caminho_remoto - caminho de destino no host remoto
-    RETURNS: tuple(bool, str) -- (sucesso, mensagem_erro). Em sucesso,
+    RETURNS: tuple(bool, str), (sucesso, mensagem_erro). Em sucesso,
              mensagem_erro e string vazia. Em falha, contem o stderr
              do scp ou descricao do erro (timeout, excecao).
     """
@@ -293,7 +302,7 @@ def garante_amidelnx_remoto(ip, ssh_user, sudo_cmd, caminho_remoto, caminho_loca
                log_local      - log local consolidado
                verbose        - modo verbose
                suprime_tela   - suprime stdout (modo csv)
-    RETURNS: bool -- True se amidelnx_64 esta pronto no alvo
+    RETURNS: bool, True se amidelnx_64 esta pronto no alvo
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, log_file, nivel, msg,
@@ -329,7 +338,7 @@ def garante_amidelnx_remoto(ip, ssh_user, sudo_cmd, caminho_remoto, caminho_loca
 
     # Usa _scp_arquivo_com_erro para capturar e logar a razao exata
     # quando o scp falhar (Permission denied, No such file, Connection
-    # refused, etc.) -- antes a mensagem de erro era descartada.
+    # refused, etc.), antes a mensagem de erro era descartada.
     sucesso_scp, erro_scp = _scp_arquivo_com_erro(
         ip, ssh_user, caminho_local, caminho_remoto)
     if not sucesso_scp:
