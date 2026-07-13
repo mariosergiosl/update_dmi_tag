@@ -30,8 +30,12 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 # CREATED: 2026-05-29
+# REVISION: 2026-07-09 - v2.1.13 - adiciona o usuario do SO (getpass)
+#                        ao cabecalho do log, para rastreabilidade
+#                        quando varios operadores compartilham a
+#                        mesma instalacao/log. Empacotamento RPM.
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
 #                        v2.1.12 (correcoes no Mecanismo 4, ver
 #                        boot_efi.py).
@@ -95,6 +99,7 @@ Codificacao: US-ASCII (sem acentos nos comentarios ou codigo-fonte).
 """
 
 import argparse
+import getpass
 import os
 import subprocess
 import sys
@@ -121,6 +126,22 @@ from .write_cascade import tenta_escrever_tag_local
 from .hosts import le_arquivo_hosts
 from .host_processor import processa_host_remoto, triagem_hosts_remotos
 from .summary import monta_tabela_resumo
+
+
+def _operador_execucao():
+    """
+    NAME: _operador_execucao
+    DESCRIPTION: Retorna o usuario do SO que esta executando a ferramenta,
+                 para rastreabilidade no cabecalho do log (util quando
+                 varios operadores compartilham a mesma instalacao/log).
+                 Nao confundir com --ssh-user (usuario SSH de destino).
+    PARAMETER: nenhum
+    RETURNS: str, nome do usuario local ou "desconhecido"
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or "desconhecido"
 
 
 def checa_superusuario():
@@ -266,7 +287,7 @@ def main():
         dest="allow_efi_fallback",
         help=(
             "EXPERIMENTAL. Habilita o Mecanismo 4 (reboot unico via UEFI "
-            "Shell + AMIDEEFIx64.EFI) para hosts onde os Mecanismos 1/2/3 "
+            "Shell + AMIDEEFIx64.EFI) para hosts onde os Mecanismos 1 e 2 "
             "falharem numa gravacao real (-w). Independente de --write/"
             "--test-write: sozinho ja autoriza o reboot fisico se houver "
             "algo a corrigir, mas so tem efeito quando -w tambem estiver "
@@ -464,8 +485,9 @@ def main():
         sys.stderr.write(
             "AVISO: --allow-efi-fallback esta ativo. Isso vai REINICIAR "
             "fisicamente os equipamentos da lista que precisarem do Mecanismo "
-            "4 (os 3 mecanismos diretos ja tiverem falhado numa gravacao real "
-            "com -w). Isso vai reiniciar as maquinas da lista. Voce tem certeza? [s/N]: ")
+            "4 (os 2 mecanismos diretos, amidelnx_64 e amibios_dmi, ja tiverem "
+            "falhado numa gravacao real com -w). Isso vai reiniciar as maquinas "
+            "da lista. Voce tem certeza? [s/N]: ")
         resposta = input().strip().lower()
         if resposta not in ("s", "sim", "y", "yes"):
             sys.stderr.write("Execucao cancelada.\n")
@@ -514,6 +536,7 @@ def main():
             SCRIPT_VERSION))
         _log_local("INFO", "Inicio: {}".format(
             time.strftime("%Y-%m-%d %H:%M:%S")))
+        _log_local("INFO", "Operad: {}".format(_operador_execucao()))
         _log_local("INFO", "Hosts : {}".format(args.hosts))
         _log_local("INFO", "User  : {}".format(args.ssh_user))
         _log_local("INFO", "Amide : {}".format(args.amide_local_path))
@@ -602,6 +625,9 @@ def main():
     gravar_log(args.log_file, "INFO",
                "update_dmi_tag.py v{} (Python {})".format(
                    SCRIPT_VERSION, sys.version.split()[0]),
+               args.verbose, args.csv)
+    gravar_log(args.log_file, "INFO",
+               "Operador (SO): {}".format(_operador_execucao()),
                args.verbose, args.csv)
 
     if args.write:

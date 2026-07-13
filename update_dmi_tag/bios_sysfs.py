@@ -17,8 +17,11 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
+#                        v2.1.13 (usuario do SO no log, empacotamento
+#                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
 #                        v2.1.12 (correcoes no Mecanismo 4, ver
 #                        boot_efi.py).
@@ -352,9 +355,14 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
 
         rc_w, stdout_w, stderr_w = _ssh(cmd_write, timeout=15)
         if "WRITE_ERROR" in stdout_w or rc_w != 0:
+            # stderr costuma vir vazio (sysfs rejeita a escrita sem
+            # mensagem), entao evita "falha na escrita, " com virgula
+            # solta e sempre inclui o rc como detalhe util.
+            detalhe = stderr_w.strip()
+            if not detalhe:
+                detalhe = "rc={}, sysfs rejeitou a escrita sem mensagem".format(rc_w)
             _log("ERROR",
-                 "amibios_dmi remoto: falha na escrita, {}".format(
-                     stderr_w.strip()))
+                 "amibios_dmi remoto: falha na escrita ({}).".format(detalhe))
             return False
 
         _log("INFO", "Operacao de escrita remota concluida.")

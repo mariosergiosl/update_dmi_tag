@@ -37,7 +37,7 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
 #
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 #
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
@@ -48,6 +48,9 @@
 #                        completo de revisoes (REVISION) anterior a esta.
 # REVISION: 2026-07-06 - v2.1.9 - atualizacao do shim para nova versao de controle.
 # REVISION: 2026-07-07 - v2.1.10 - atualizacao do shim para nova versao de controle.
+# REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
+#                        v2.1.13 (usuario do SO no log, empacotamento
+#                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
 #                        v2.1.12 (correcoes no Mecanismo 4, ver
 #                        boot_efi.py).

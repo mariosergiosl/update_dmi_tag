@@ -12,7 +12,7 @@
 #
 #              So acionado explicitamente via --allow-efi-fallback,
 #              independente de --write/--test-write, e so depois que os
-#              Mecanismos 1/2/3 ja falharam de verdade (FALHOU-todos) na
+#              Mecanismos 1 e 2 ja falharam de verdade (FALHOU-todos) na
 #              tentativa real de gravacao. Nunca roda em --test-write:
 #              o --test-write existe para ser 100% seguro e reversivel,
 #              e este mecanismo reboota o equipamento, natureza de
@@ -40,8 +40,19 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 # CREATED: 2026-07-08
+# REVISION: 2026-07-09 - v2.1.13 - idempotencia: _limpa_sobra_anterior
+#                        no inicio remove sobras nossas de execucao
+#                        anterior anormal (kill/crash), evitando BLOQUEADO
+#                        permanente na re-execucao. Na espera pos-reboot,
+#                        usa log local-only (_log_local, sem SSH para o
+#                        host reiniciando) no formato consolidado padrao,
+#                        com heartbeat a cada ~30s. Corrige a duplicacao
+#                        de linhas na tela: o log dedicado do MEC4 nao
+#                        imprime mais no stdout. Nomenclatura: Mecanismos
+#                        1 e 2 (nao "1/2/3"). Empacotamento RPM e usuario
+#                        do SO no log (ver __main__.py).
 # REVISION: 2026-07-09 - v2.1.12 - corrige startup.nsh do Mecanismo 4
 #                        (faltava "cd" para o diretorio correto antes
 #                        de chamar o AMIDEEFIx64.EFI) e corrige risco de
@@ -71,7 +82,7 @@ from .constants import (
     DEFAULT_EFI_MIN_FREE_KB,
     DEFAULT_EFI_REBOOT_TIMEOUT,
 )
-from .logging_utils import gravar_log, gravar_log_remoto
+from .logging_utils import gravar_log, gravar_log_remoto, gravar_log_local_consolidado
 from .ssh_utils import ssh_run, testa_porta_ssh, testa_conexao_ssh, _scp_arquivo_com_erro
 
 
@@ -95,8 +106,12 @@ def _fabrica_log(ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
                           nivel, msg, caminho_log_local, verbose, suprime_tela)
         if caminho_log_efi:
+            # Grava so no arquivo dedicado do Mecanismo 4; nao imprime no
+            # stdout de novo (o gravar_log_remoto acima ja imprimiu esta
+            # linha), senao cada evento do MEC4 apareceria duplicado na
+            # tela, e a segunda copia num formato diferente.
             gravar_log(caminho_log_efi, nivel, "[{}] {}".format(ip, msg),
-                       verbose, False)
+                       False, True)
     return _log
 
 
@@ -309,6 +324,19 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
                         caminho_log_local, caminho_log_efi,
                         args.verbose, args.csv)
 
+    def _log_local(nivel, msg):
+        # Log local-only (sem SSH para o host): usado na janela de reboot,
+        # quando o host esta inacessivel por definicao. Evita gastar o
+        # timeout do SSH tentando gravar no host que esta reiniciando.
+        # Escreve no log consolidado no MESMO formato das demais linhas
+        # (ts - [IP] - NIVEL - msg), no log dedicado do MEC4 e no stdout
+        # (se verbose), uma unica vez.
+        gravar_log_local_consolidado(ip, nivel, msg, caminho_log_local,
+                                     args.verbose, args.csv)
+        if caminho_log_efi:
+            gravar_log(caminho_log_efi, nivel, "[{}] {}".format(ip, msg),
+                       False, True)
+
     def _ssh(cmd, timeout=15):
         return ssh_run(ip, ssh_user, cmd, timeout=timeout)
 
@@ -317,8 +345,17 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     subdir = DEFAULT_EFI_REMOTE_SUBDIR
     remoto_dir = "{}/EFI/{}".format(esp, subdir)
 
+    # 0. Idempotencia: remove sobras nossas de uma execucao anterior que
+    # terminou de forma anormal (kill, crash, queda de energia) e nao
+    # chegou a limpar. Sem isso, a re-execucao contra o mesmo host ficaria
+    # BLOQUEADO para sempre pela colisao de label. So mexe em artefatos
+    # nossos (label UPDATE_DMI_TAG_TEMP e diretorio EFI/UPDATEDMITAG),
+    # nunca na configuracao de boot real do host.
+    _limpa_sobra_anterior(ip, ssh_user, sudo_cmd, label, remoto_dir, _log)
+
     # 1. Checagem de seguranca, aborta ANTES de tocar em qualquer coisa
-    # se qualquer condicao nao for segura.
+    # se qualquer condicao nao for segura. (A colisao de label so
+    # bloquearia agora se a limpeza acima tiver falhado, defesa extra.)
     try:
         verifica_seguranca_efi_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
@@ -455,11 +492,15 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     # 4. Reinicia. A conexao SSH cai junto, isso e esperado, nao e erro.
     _ssh("{} reboot".format(sudo_cmd), timeout=5)
 
-    # 5. Espera o host voltar, com timeout configuravel.
+    # 5. Espera o host voltar, com timeout configuravel. Toda a
+    # comunicacao aqui e via _log_local (nunca _log/SSH remoto), porque
+    # o host esta reiniciando e inacessivel: tentar gravar log nele
+    # gastaria o timeout do SSH a cada linha.
     timeout = getattr(args, "efi_timeout", DEFAULT_EFI_REBOOT_TIMEOUT)
-    _log("INFO", "[MEC4] Aguardando o host voltar (timeout: {} s)...".format(timeout))
+    _log_local("INFO", "[MEC4] Aguardando o host voltar (timeout: {} s)...".format(timeout))
     inicio = time.time()
     voltou = False
+    proximo_heartbeat = 30
     # Da uma folga inicial para o host realmente cair antes de comecar a
     # tentar reconectar (evita falso-positivo testando a conexao antiga).
     time.sleep(15)
@@ -467,14 +508,24 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
         if testa_porta_ssh(ip, timeout=3.0) and testa_conexao_ssh(ip, ssh_user):
             voltou = True
             break
+        # Heartbeat na tela/log local a cada ~30s, para deixar claro que
+        # a ferramenta esta viva e aguardando (nao travada).
+        decorrido = int(time.time() - inicio)
+        if decorrido >= proximo_heartbeat:
+            _log_local("INFO",
+                       "[MEC4] ...ainda aguardando o host voltar "
+                       "({} s de {} s decorridos).".format(decorrido, timeout))
+            proximo_heartbeat = decorrido + 30
         time.sleep(10)
 
     if not voltou:
-        _log("ERROR",
-             "[MEC4] ATENCAO, host nao respondeu via SSH em {} s apos o reboot. "
-             "Pode ter ficado preso no EFI Shell (BootNext nao consumido ou "
-             "startup.nsh travado). REQUER INTERVENCAO FISICA para verificar "
-             "e, se necessario, forcar o boot normal.".format(timeout))
+        # Host nao respondeu: por definicao esta inacessivel, entao o log
+        # e local-only (tentar gravar nele so gastaria o timeout do SSH).
+        _log_local("ERROR",
+                   "[MEC4] ATENCAO, host nao respondeu via SSH em {} s apos o reboot. "
+                   "Pode ter ficado preso no EFI Shell (BootNext nao consumido ou "
+                   "startup.nsh travado). REQUER INTERVENCAO FISICA para verificar "
+                   "e, se necessario, forcar o boot normal.".format(timeout))
         return "TRAVADO-POS-REBOOT"
 
     _log("INFO", "[MEC4] Host respondeu via SSH novamente apos o reboot.")
@@ -491,6 +542,49 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     _log("ERROR", "[MEC4] Tag apos reboot ('{}') nao confere com o esperado ('{}').".format(
         tag_lida, tag))
     return "FALHOU-efiboot"
+
+
+def _limpa_sobra_anterior(ip, ssh_user, sudo_cmd, label, remoto_dir, _log):
+    """
+    NAME: _limpa_sobra_anterior
+    DESCRIPTION: Torna o Mecanismo 4 idempotente. Remove sobras de uma
+                 execucao anterior que terminou de forma anormal (kill,
+                 crash, queda de energia) e nao chegou a limpar: entradas
+                 de boot na NVRAM com o NOSSO label e o NOSSO diretorio na
+                 ESP. Sem isso, uma re-execucao contra o mesmo host ficaria
+                 BLOQUEADA para sempre pela colisao de label. So mexe em
+                 artefatos criados por esta ferramenta (label
+                 UPDATE_DMI_TAG_TEMP, dir EFI/UPDATEDMITAG); nunca toca na
+                 configuracao de boot real do host. Melhor esforco: falhas
+                 sao logadas mas nao interrompem o fluxo (a checagem de
+                 seguranca seguinte ainda bloqueia se a sobra persistir).
+    PARAMETER: ip, ssh_user, sudo_cmd - identificacao/privilegio no host
+               label                   - label das entradas a remover
+               remoto_dir              - diretorio nosso na ESP a remover
+               _log                    - funcao de log ja fechada sobre o host
+    RETURNS: None
+    """
+    rc, out, _ = ssh_run(ip, ssh_user, "{} efibootmgr".format(sudo_cmd), timeout=15)
+    if rc == 0:
+        numeros = []
+        for linha in out.splitlines():
+            # Linhas do tipo "Boot0001* UPDATE_DMI_TAG_TEMP  HD(...)".
+            if label in linha and linha.strip().startswith("Boot"):
+                numeros.append(linha.strip()[4:8])
+        for num in numeros:
+            r, _, err = ssh_run(
+                ip, ssh_user, "{} efibootmgr -b {} -B".format(sudo_cmd, num), timeout=15)
+            if r == 0:
+                _log("WARNING",
+                     "[MEC4] Sobra de execucao anterior removida: entrada de boot "
+                     "Boot{} ({}).".format(num, label))
+            else:
+                _log("WARNING",
+                     "[MEC4] Nao foi possivel remover a sobra Boot{}: {}.".format(
+                         num, err.strip()))
+
+    ssh_run(ip, ssh_user, "{} rm -rf {}".format(sudo_cmd, shlex.quote(remoto_dir)),
+            timeout=15)
 
 
 def _limpa_entrada_e_arquivos(ip, ssh_user, sudo_cmd, boot_num, remoto_dir, _log):

@@ -13,8 +13,17 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.13 - gravar_log_remoto passa a usar timeout
+#                        (15 s) no subprocess.run do SSH. Sem ele, gravar
+#                        um log logo apos um reboot (host reiniciando)
+#                        pendurava o SSH para sempre e travava a
+#                        ferramenta inteira. Com timeout, a escrita remota
+#                        falha rapido e registra so localmente. Adiciona
+#                        gravar_log_local_consolidado (log local + stdout
+#                        no formato "ts - [IP] - NIVEL - msg", sem SSH),
+#                        usado na janela de reboot do Mecanismo 4.
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
 #                        v2.1.12 (correcoes no Mecanismo 4, ver
 #                        boot_efi.py).
@@ -91,6 +100,38 @@ def gravar_log(
         sys.stdout.write(linha_log)
 
 
+def gravar_log_local_consolidado(ip, nivel, mensagem, caminho_log_local,
+                                  verbose, suprime_tela):
+    """
+    NAME: gravar_log_local_consolidado
+    DESCRIPTION: Grava uma linha no log local consolidado (e no stdout se
+                 verbose) no MESMO formato de gravar_log_remoto
+                 ("ts - [IP] - NIVEL - msg"), porem SEM tentar gravar no
+                 host remoto via SSH. Usado quando o host esta
+                 inacessivel por definicao (ex: janela de reboot do
+                 Mecanismo 4), para manter o padrao das demais linhas do
+                 log consolidado sem gastar o timeout do SSH tentando
+                 alcancar um host que esta reiniciando.
+    PARAMETER: ip                - endereco IP do host (prefixo da linha)
+               nivel             - INFO / WARNING / ERROR / DEBUG
+               mensagem          - texto da mensagem
+               caminho_log_local - log consolidado local (vazio = ignorar)
+               verbose           - se True, imprime no stdout
+               suprime_tela      - se True, bloqueia a impressao
+    RETURNS: None
+    """
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    linha = "{} - [{}] - {} - {}\n".format(timestamp, ip, nivel, mensagem)
+    if caminho_log_local:
+        try:
+            with open(caminho_log_local, "a", encoding="utf-8") as f:
+                f.write(linha)
+        except Exception as e:
+            sys.stderr.write("Erro ao gravar log local: {}\n".format(e))
+    if verbose and not suprime_tela:
+        sys.stdout.write(linha)
+
+
 
 
 def gravar_log_remoto(
@@ -147,10 +188,17 @@ def gravar_log_remoto(
             linha=linha_escapada.rstrip("\n"),
             log=caminho_log_remoto,
         )
+        # IMPORTANTE: timeout obrigatorio. Sem ele, um log gravado logo
+        # apos um reboot (ex: "Aguardando o host voltar" do Mecanismo 4)
+        # abriria um SSH para o host que acabou de reiniciar e ficaria
+        # pendurado para sempre, travando a ferramenta inteira. Com o
+        # timeout, a escrita remota falha rapido e cai no except abaixo
+        # (registra so localmente), sem bloquear o fluxo.
         subprocess.run(
             ["ssh"] + SSH_OPTS + ["{}@{}".format(ssh_user, ip), cmd_remoto],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=15,
             check=False,
         )
     except Exception as e:

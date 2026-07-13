@@ -13,8 +13,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.12
+# VERSION: 2.1.13
 # CREATED: 2026-06-12
+# REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
+#                        v2.1.13 (usuario do SO no log, empacotamento
+#                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
 #                        v2.1.12 (correcoes no Mecanismo 4, ver
 #                        boot_efi.py).
@@ -162,6 +165,27 @@ def _descricao_resultado(resultado):
     return resultado
 
 
+def _status_curto(resultado):
+    """
+    NAME: _status_curto
+    DESCRIPTION: Encurta status longos apenas para exibicao nas colunas
+                 das tabelas de resumo, evitando o corte no meio de uma
+                 palavra (ex: "BLOQUEADO-Ja e"). O caso principal e o
+                 "BLOQUEADO-<motivo>", onde o motivo completo (60+ chars)
+                 embutido no status estoura a coluna; o motivo continua
+                 integral no log dedicado e na coluna Observacao. Status
+                 ja curtos (OK-*, FALHOU-*, DRY-RUN, etc.) passam
+                 inalterados. Nao altera o valor real do resultado usado
+                 na logica (RC, agrupamento), so o texto exibido.
+    PARAMETER: resultado - string de resultado
+    RETURNS: str, status abreviado para caber na coluna
+    """
+    s = str(resultado or "")
+    if s.startswith("BLOQUEADO"):
+        return "BLOQUEADO"
+    return s
+
+
 def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
                         write_ativo=False):
     """
@@ -228,7 +252,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         "bem_conf":       14,
         "bem_usado":      14,
         "tag_depois":     15,
-        "resultado":      13,
+        "resultado":      18,
         "teste_escrita":  15,
         "bbconfig_sync":  17,
         "mac":            52,
@@ -262,6 +286,9 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         if (str(r.get("resultado", "")) == "DRY-RUN"
                 and linha_valores.get("bbconfig_sync") == "N/A"):
             linha_valores["bbconfig_sync"] = "DRY-RUN"
+        # Status abreviado na coluna (o motivo completo do BLOQUEADO fica
+        # no log dedicado; aqui evita o corte no meio da palavra).
+        linha_valores["resultado"] = _status_curto(r.get("resultado", "N/D"))
         partes = [_cel(linha_valores.get(k, "N/D"), w) for k, w in C.items()]
         _escreve("| " + " | ".join(partes) + " |")
 
@@ -285,7 +312,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     CS = {
         "bios":       15,
         "flag_w":      5,
-        "resultado":  14,
+        "resultado":  18,
         "qtd":         5,
         "observacao": 80,
     }
@@ -304,7 +331,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     for (bios, fw, resultado), qtd in grupos.items():
         observacao = _descricao_resultado(resultado)
         valores = {
-            "bios": bios, "flag_w": fw, "resultado": resultado,
+            "bios": bios, "flag_w": fw, "resultado": _status_curto(resultado),
             "qtd": qtd, "observacao": observacao,
         }
         partes = [_cel(valores[k], w) for k, w in CS.items()]
