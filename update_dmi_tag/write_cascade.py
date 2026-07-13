@@ -17,16 +17,21 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
 #                        v2.1.13 (usuario do SO no log, empacotamento
 #                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - tenta_escrever_tag_remoto passa a
-#                        acionar o Mecanismo 4 (boot_efi.py) quando os
+#                        acionar o Mecanismo 3 (boot_efi.py) quando os
 #                        Mecanismos 1/2 falharem numa gravacao real (nao
 #                        dry-run) E --allow-efi-fallback estiver ativo.
 #                        Import local (dentro da funcao) para evitar
@@ -181,7 +186,7 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
             # restante da cascata; so e importado quando a flag e usada.
             from .boot_efi import executa_boot_efi_remoto
             _log("WARNING",
-                 "Mecanismos 1/2 falharam, tentando Mecanismo 4 (boot EFI). "
+                 "Mecanismos 1/2 falharam, tentando Mecanismo 3 (boot EFI). "
                  "Ver log dedicado: {}".format(getattr(args, "log_efi", "")))
             return executa_boot_efi_remoto(
                 ip, ssh_user, sudo_cmd, tag, args,

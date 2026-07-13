@@ -13,8 +13,13 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - gravar_log_remoto passa a usar timeout
 #                        (15 s) no subprocess.run do SSH. Sem ele, gravar
 #                        um log logo apos um reboot (host reiniciando)
@@ -23,9 +28,9 @@
 #                        falha rapido e registra so localmente. Adiciona
 #                        gravar_log_local_consolidado (log local + stdout
 #                        no formato "ts - [IP] - NIVEL - msg", sem SSH),
-#                        usado na janela de reboot do Mecanismo 4.
+#                        usado na janela de reboot do Mecanismo 3.
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem
@@ -109,7 +114,7 @@ def gravar_log_local_consolidado(ip, nivel, mensagem, caminho_log_local,
                  ("ts - [IP] - NIVEL - msg"), porem SEM tentar gravar no
                  host remoto via SSH. Usado quando o host esta
                  inacessivel por definicao (ex: janela de reboot do
-                 Mecanismo 4), para manter o padrao das demais linhas do
+                 Mecanismo 3), para manter o padrao das demais linhas do
                  log consolidado sem gastar o timeout do SSH tentando
                  alcancar um host que esta reiniciando.
     PARAMETER: ip                - endereco IP do host (prefixo da linha)
@@ -189,7 +194,7 @@ def gravar_log_remoto(
             log=caminho_log_remoto,
         )
         # IMPORTANTE: timeout obrigatorio. Sem ele, um log gravado logo
-        # apos um reboot (ex: "Aguardando o host voltar" do Mecanismo 4)
+        # apos um reboot (ex: "Aguardando o host voltar" do Mecanismo 3)
         # abriria um SSH para o host que acabou de reiniciar e ficaria
         # pendurado para sempre, travando a ferramenta inteira. Com o
         # timeout, a escrita remota falha rapido e cai no except abaixo

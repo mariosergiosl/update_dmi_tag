@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.1.13
+Version:        2.1.14
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -26,7 +26,7 @@ Requires:       openssh
 Ferramenta para ler um numero de patrimonio (13 ou 14 digitos), validar
 o digito verificador (Modulo 11) e gravar o valor no campo DMI Chassis
 Asset Tag da BIOS AMI, via cascata de mecanismos (amidelnx_64,
-amibios_dmi via sysfs, e o Mecanismo 4 experimental via boot EFI
+amibios_dmi via sysfs, e o Mecanismo 3 experimental via boot EFI
 temporario). Suporta execucao local (standalone) e remota em lote
 (lista de hosts via SSH), sempre em modo Dry-Run por padrao.
 
@@ -80,14 +80,20 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
-* Thu Jul 09 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.13-0
-- Corrige travamento do Mecanismo 4 (timeout no SSH de gravar_log_remoto;
+* Sun Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.14-0
+- Renumeracao do mecanismo de boot EFI de "Mecanismo 4" para
+  "Mecanismo 3" (elimina o buraco na numeracao da cascata: 1, 2, 3). So
+  exibicao (log/ajuda/docs); identificadores funcionais inalterados.
+* Sun Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.13-0
+- Corrige travamento do Mecanismo 3 (timeout no SSH de gravar_log_remoto;
   antes, logar apos o reboot pendurava a ferramenta para sempre).
+- Idempotencia do Mecanismo 3: re-execucao apos termino anormal se
+  autolimpa em vez de ficar bloqueada.
 - Espera pos-reboot com heartbeat na tela; corrige duplicacao de linhas
-  do Mecanismo 4 no stdout.
+  do Mecanismo 3 no stdout.
 - Adiciona o usuario do SO ao cabecalho do log (rastreabilidade quando
   varios operadores compartilham a mesma instalacao).
 - Primeira versao empacotada como RPM (instalacao em /opt/update_dmi_tag,
   wrapper em /usr/bin/update_dmi_tag).
 * Thu Jul 09 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.12-0
-- Validacao do Mecanismo 4 em VM real e correcoes de seguranca.
+- Validacao do Mecanismo 3 em VM real e correcoes de seguranca.

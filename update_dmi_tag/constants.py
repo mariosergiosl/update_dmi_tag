@@ -13,17 +13,22 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
 #                        v2.1.13 (usuario do SO no log, empacotamento
 #                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - adiciona SegurancaEfiBloqueadaError,
 #                        RC_SAFETY_ABORT e as constantes DEFAULT_EFI_* do
-#                        Mecanismo 4 (boot EFI temporario, experimental --
+#                        Mecanismo 3 (boot EFI temporario, experimental --
 #                        ver boot_efi.py).
 # REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py (arquivo
 #                        unico) na modularizacao em pacote. Conteudo
@@ -106,7 +111,7 @@ class TodosMecanismosFalharam(Exception):
 class SegurancaEfiBloqueadaError(Exception):
     """
     NAME: SegurancaEfiBloqueadaError
-    DESCRIPTION: Sinaliza que o Mecanismo 4 (boot EFI temporario, ver
+    DESCRIPTION: Sinaliza que o Mecanismo 3 (boot EFI temporario, ver
                  boot_efi.py) nao pode ser tentado com seguranca neste
                  host, Secure Boot ativo, disco com criptografia selada
                  em TPM, particao EFI (ESP) sem espaco/gravavel, binario
@@ -121,7 +126,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.1.13"
+SCRIPT_VERSION = "2.1.14"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -166,7 +171,7 @@ DEFAULT_MODULE_PACKAGE  = "amibios-dmi-kmp-default"
 SYSMODULE_PATH          = "/sys/module/amibios_dmi"
 SYSFS_IFACE_PATH        = "/sys/firmware/amibios"
 
-# --- Mecanismo 4: boot EFI temporario (AMIDEEFIx64.EFI via UEFI Shell) ---
+# --- Mecanismo 3: boot EFI temporario (AMIDEEFIx64.EFI via UEFI Shell) ---
 # Experimental, so acionado explicitamente via --allow-efi-fallback (ver
 # boot_efi.py e manual_operacao.md). Reboota o host uma unica vez para
 # gravar o Chassis Asset Tag em pre-boot, contornando o bloqueio de WSMT

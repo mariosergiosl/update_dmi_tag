@@ -1,6 +1,6 @@
-# efi_boot/dmi-atm: binários do Mecanismo 4 (EXPERIMENTAL)
+# efi_boot/dmi-atm: binários do Mecanismo 3 (EXPERIMENTAL)
 
-Pasta usada por `--efi-local-dir` (padrão) para o Mecanismo 4 de gravação
+Pasta usada por `--efi-local-dir` (padrão) para o Mecanismo 3 de gravação
 da DMI Asset Tag via boot temporário em UEFI Shell. Ver seção 17 do
 `manual_operacao.md` para o fluxo completo.
 

@@ -30,18 +30,23 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-05-29
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - adiciona o usuario do SO (getpass)
 #                        ao cabecalho do log, para rastreabilidade
 #                        quando varios operadores compartilham a
 #                        mesma instalacao/log. Empacotamento RPM.
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - adiciona --allow-efi-fallback,
 #                        --efi-local-dir, --efi-timeout e --log-efi
-#                        (Mecanismo 4, experimental, ver boot_efi.py).
+#                        (Mecanismo 3, experimental, ver boot_efi.py).
 #                        Validacao dura dos binarios quando a flag e usada,
 #                        confirmacao interativa obrigatoria (aborta com
 #                        RC_SAFETY_ABORT se nao houver terminal ou o
@@ -280,19 +285,19 @@ def main():
             DEFAULT_MODULE_PACKAGE),
     )
 
-    # --- Mecanismo 4: boot EFI temporario (experimental) ---
+    # --- Mecanismo 3: boot EFI temporario (experimental) ---
     parser.add_argument(
         "--allow-efi-fallback",
         action="store_true",
         dest="allow_efi_fallback",
         help=(
-            "EXPERIMENTAL. Habilita o Mecanismo 4 (reboot unico via UEFI "
+            "EXPERIMENTAL. Habilita o Mecanismo 3 (reboot unico via UEFI "
             "Shell + AMIDEEFIx64.EFI) para hosts onde os Mecanismos 1 e 2 "
             "falharem numa gravacao real (-w). Independente de --write/"
             "--test-write: sozinho ja autoriza o reboot fisico se houver "
             "algo a corrigir, mas so tem efeito quando -w tambem estiver "
             "presente (sem -w, os mecanismos diretos nunca sao realmente "
-            "testados, entao nao ha FALHOU-todos para acionar o Mecanismo 4). "
+            "testados, entao nao ha FALHOU-todos para acionar o Mecanismo 3). "
             "Pede confirmacao interativa antes de iniciar; recusa aborta a "
             "execucao inteira. NAO pode ser usado sem terminal interativo."
         ),
@@ -302,7 +307,7 @@ def main():
         default=None,
         dest="efi_local_dir",
         help=(
-            "Pasta local com AMIDEEFIx64.EFI e bootx64.efi para o Mecanismo 4 "
+            "Pasta local com AMIDEEFIx64.EFI e bootx64.efi para o Mecanismo 3 "
             "(padrao: ./efi_boot/dmi-atm). So usado com --allow-efi-fallback."
         ),
     )
@@ -313,7 +318,7 @@ def main():
         dest="efi_timeout",
         help=(
             "Segundos aguardando o host reconectar via SSH apos o reboot do "
-            "Mecanismo 4 antes de declarar TRAVADO-POS-REBOOT (padrao: {}).".format(
+            "Mecanismo 3 antes de declarar TRAVADO-POS-REBOOT (padrao: {}).".format(
                 DEFAULT_EFI_REBOOT_TIMEOUT)
         ),
     )
@@ -321,7 +326,7 @@ def main():
         "--log-efi",
         default=DEFAULT_EFI_LOG_FILE,
         dest="log_efi",
-        help="Log dedicado do Mecanismo 4 (padrao: {})".format(DEFAULT_EFI_LOG_FILE),
+        help="Log dedicado do Mecanismo 3 (padrao: {})".format(DEFAULT_EFI_LOG_FILE),
     )
 
     # --- Log ---

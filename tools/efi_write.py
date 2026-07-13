@@ -8,11 +8,11 @@
 # USAGE: tools/efi_write.py --hosts <arquivo> [opcoes]
 #        tools/efi_write.py --ip <IP> --tag <14 digitos> [opcoes]
 #
-# DESCRIPTION: Script standalone para o Mecanismo 4 (boot EFI temporario,
+# DESCRIPTION: Script standalone para o Mecanismo 3 (boot EFI temporario,
 #              experimental, ver update_dmi_tag/boot_efi.py). Reaproveita
 #              o mesmo modulo usado pela integracao no update_dmi_tag.py
 #              (--allow-efi-fallback), mas roda isolado: pensado para
-#              reprocessar so os hosts onde os Mecanismos 1/2/3 ja
+#              reprocessar so os hosts onde os Mecanismos 1 e 2 ja
 #              falharam numa execucao anterior do update_dmi_tag.py com
 #              -w, sem precisar repetir toda a auditoria/cascata.
 #
@@ -20,7 +20,7 @@
 #              isso e responsabilidade do operador confirmar antes (via
 #              o resultado FALHOU-todos na tabela de resumo do
 #              update_dmi_tag.py). Este script vai direto para a
-#              checagem de seguranca + Mecanismo 4.
+#              checagem de seguranca + Mecanismo 3.
 #
 #              Fluxo por host:
 #                1. Testa conectividade e bootstrap de chave SSH
@@ -42,15 +42,20 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-07-08
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
 #                        v2.1.13 (usuario do SO no log, empacotamento
 #                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
-# REVISION: 2026-07-08 - v2.1.11 - criacao do script (Mecanismo 4
+# REVISION: 2026-07-08 - v2.1.11 - criacao do script (Mecanismo 3
 #                        standalone, experimental). Ainda nao validado em
 #                        hardware real.
 #
@@ -87,7 +92,7 @@ def _processa_host(ip, bem_lista, args, tag_explicita=""):
     DESCRIPTION: Prepara o acesso ao host (conectividade, chave SSH,
                  sudo) e resolve a tag a ser gravada, depois delega para
                  boot_efi.executa_boot_efi_remoto. Nao tenta os
-                 Mecanismos 1/2/3, pressupoe que ja falharam numa
+                 Mecanismos 1 e 2, pressupoe que ja falharam numa
                  execucao anterior do update_dmi_tag.py.
     PARAMETER: ip              - endereco IP do host
                bem_lista        - BEM_NUMERO da lista de hosts (pode ser vazio)
@@ -100,7 +105,7 @@ def _processa_host(ip, bem_lista, args, tag_explicita=""):
     def _log(nivel, msg):
         _log_local(caminho_log_local, args.verbose, nivel, "[{}] {}".format(ip, msg))
 
-    _log("INFO", "====== Iniciando Mecanismo 4 standalone: {} ======".format(ip))
+    _log("INFO", "====== Iniciando Mecanismo 3 standalone: {} ======".format(ip))
 
     if not testa_porta_ssh(ip, timeout=2.0):
         _log("ERROR", "Host offline ou porta SSH (TCP 22) fechada. Pulado.")
@@ -115,7 +120,7 @@ def _processa_host(ip, bem_lista, args, tag_explicita=""):
 
     sudo_cmd, sudo_confirmado = detecta_sudo(ip, args.ssh_user, args.sudo_pass)
     if not sudo_confirmado:
-        _log("ERROR", "Sudo nao confirmado no host. Pulado (Mecanismo 4 exige privilegio).")
+        _log("ERROR", "Sudo nao confirmado no host. Pulado (Mecanismo 3 exige privilegio).")
         return "SEM-SUDO"
 
     if tag_explicita:
@@ -141,7 +146,7 @@ def _processa_host(ip, bem_lista, args, tag_explicita=""):
         caminho_log_local=caminho_log_local,
         caminho_log_efi=args.log_efi,
     )
-    _log("INFO", "====== Fim (Mecanismo 4 standalone): {} -- {} ======".format(ip, resultado))
+    _log("INFO", "====== Fim (Mecanismo 3 standalone): {} -- {} ======".format(ip, resultado))
     return resultado
 
 
@@ -149,8 +154,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog="efi_write.py",
         description=(
-            "Mecanismo 4 standalone (boot EFI temporario, EXPERIMENTAL). "
-            "Reprocessa hosts onde os Mecanismos 1/2/3 do update_dmi_tag.py "
+            "Mecanismo 3 standalone (boot EFI temporario, EXPERIMENTAL). "
+            "Reprocessa hosts onde os Mecanismos 1 e 2 do update_dmi_tag.py "
             "ja falharam numa gravacao real (-w). Sempre reboota fisicamente "
             "os hosts que passarem na checagem de seguranca, sem modo dry-run."
         ),
@@ -209,7 +214,7 @@ def main():
     alvo_desc = args.ip if args.ip else "hosts em {}".format(args.hosts)
     sys.stderr.write(
         "AVISO: este script vai REINICIAR fisicamente os hosts ({}) que "
-        "passarem na checagem de seguranca do Mecanismo 4. "
+        "passarem na checagem de seguranca do Mecanismo 3. "
         "Isso vai reiniciar as maquinas da lista. Voce tem certeza? [s/N]: ".format(alvo_desc))
     resposta = input().strip().lower()
     if resposta not in ("s", "sim", "y", "yes"):
@@ -218,7 +223,7 @@ def main():
 
     _log_local(args.log_local, args.verbose, "INFO", "=" * 70)
     _log_local(args.log_local, args.verbose, "INFO",
-              "efi_write.py, Mecanismo 4 standalone (EXPERIMENTAL). Inicio: {}".format(
+              "efi_write.py, Mecanismo 3 standalone (EXPERIMENTAL). Inicio: {}".format(
                   time.strftime("%Y-%m-%d %H:%M:%S")))
     _log_local(args.log_local, args.verbose, "INFO", "=" * 70)
 

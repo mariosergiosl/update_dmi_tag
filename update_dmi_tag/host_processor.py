@@ -15,17 +15,22 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
 #                        v2.1.13 (usuario do SO no log, empacotamento
 #                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - registro["tag_depois"] passa a virar
 #                        "DESCONHECIDO" quando resultado_escrita for
-#                        "TRAVADO-POS-REBOOT" (Mecanismo 4, ver
+#                        "TRAVADO-POS-REBOOT" (Mecanismo 3, ver
 #                        write_cascade.py/boot_efi.py), assumir tag_antes
 #                        nesse caso seria enganoso, pois nao ha como
 #                        confirmar por SSH se a gravacao chegou a
@@ -348,7 +353,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
             timeout=10)
         registro["tag_depois"] = tag_depois.strip() or "N/D"
     elif resultado_escrita == "TRAVADO-POS-REBOOT":
-        # Mecanismo 4: host nao respondeu apos o reboot. Nao ha como
+        # Mecanismo 3: host nao respondeu apos o reboot. Nao ha como
         # confirmar por SSH se a gravacao chegou a acontecer antes de
         # travar, assumir tag_antes aqui seria enganoso.
         registro["tag_depois"] = "DESCONHECIDO"

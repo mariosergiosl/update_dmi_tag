@@ -13,18 +13,23 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.13
+# VERSION: 2.1.14
 # CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
 # REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
 #                        v2.1.13 (usuario do SO no log, empacotamento
 #                        RPM; ver __main__.py e update_dmi_tag.spec).
 # REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
-#                        v2.1.12 (correcoes no Mecanismo 4, ver
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
 #                        boot_efi.py).
 # REVISION: 2026-07-08 - v2.1.11 - adiciona descricoes e contadores para os
-#                        status do Mecanismo 4 (OK-efiboot, FALHOU-efiboot,
+#                        status do Mecanismo 3 (OK-efiboot, FALHOU-efiboot,
 #                        TRAVADO-POS-REBOOT, BLOQUEADO-*). Novo bloco
-#                        "Mecanismo 4" no sumario agregado, so exibido
+#                        "Mecanismo 3" no sumario agregado, so exibido
 #                        quando --allow-efi-fallback foi usado em algum
 #                        host, com destaque especial para
 #                        TRAVADO-POS-REBOOT (requer verificacao fisica).
@@ -129,13 +134,13 @@ def _normaliza_bios_vendor(bios_vendor):
 # usado no sumario agregado. Chaves sao comparadas por prefixo (ex:
 # "FALHOU" cobre "FALHOU-todos"; "INACESSIVEL" e exato).
 _DESCRICOES_RESULTADO = (
-    ("OK-efiboot",  "Sucesso via Mecanismo 4 (boot EFI temporario apos reboot unico, ver log dedicado)."),
+    ("OK-efiboot",  "Sucesso via Mecanismo 3 (boot EFI temporario apos reboot unico, ver log dedicado)."),
     ("OK-amidelnx", "Sucesso. Gravacao confirmada via amidelnx_64 (Mecanismo 1)."),
     ("OK-amibios",  "Sucesso. Gravacao confirmada via amibios_dmi/sysfs (Mecanismo 2, fallback)."),
     ("DRY-RUN",     "Leitura realizada com sucesso (Simulacao). Nenhuma gravacao executada."),
-    ("TRAVADO-POS-REBOOT", "ATENCAO: Mecanismo 4 reiniciou o host e ele nao respondeu via SSH, requer intervencao fisica."),
-    ("FALHOU-efiboot", "Mecanismo 4 tentado (host voltou do reboot) mas a tag nao conferiu."),
-    ("BLOQUEADO-",  "Mecanismo 4 nao foi tentado por seguranca (Secure Boot, TPM, espaco, etc., ver log dedicado)."),
+    ("TRAVADO-POS-REBOOT", "ATENCAO: Mecanismo 3 reiniciou o host e ele nao respondeu via SSH, requer intervencao fisica."),
+    ("FALHOU-efiboot", "Mecanismo 3 tentado (host voltou do reboot) mas a tag nao conferiu."),
+    ("BLOQUEADO-",  "Mecanismo 3 nao foi tentado por seguranca (Secure Boot, TPM, espaco, etc., ver log dedicado)."),
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
     ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
@@ -371,7 +376,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # Host inacessivel via SSH
     inacessivel = sum(1 for r in registros if r.get("resultado") == "INACESSIVEL")
 
-    # Mecanismo 4 (boot EFI, experimental, ver boot_efi.py)
+    # Mecanismo 3 (boot EFI, experimental, ver boot_efi.py)
     efiboot_ok        = sum(1 for r in registros if r.get("resultado") == "OK-efiboot")
     efiboot_falhou    = sum(1 for r in registros if r.get("resultado") == "FALHOU-efiboot")
     efiboot_travado   = sum(1 for r in registros if r.get("resultado") == "TRAVADO-POS-REBOOT")
@@ -381,7 +386,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # Qualquer outro status nao mapeado acima.
     # efiboot_falhou NAO entra aqui: "FALHOU-efiboot" ja comeca com "FALHOU"
     # e portanto ja esta contado dentro de "falhou" acima. So subtraimos os
-    # 3 status de Mecanismo 4 que nao tem bucket proprio nos contadores
+    # 3 status de Mecanismo 3 que nao tem bucket proprio nos contadores
     # classicos (OK-efiboot, TRAVADO-POS-REBOOT, BLOQUEADO-*), subtrair
     # efiboot_total inteiro contaria FALHOU-efiboot duas vezes.
     outros = (total - ok_total - dryrun - falhou - sem_sudo - pendente
@@ -403,7 +408,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     _escreve("")
 
     # =====================================================================
-    # CONTADORES, MECANISMO 4 (boot EFI, experimental)
+    # CONTADORES, MECANISMO 3 (boot EFI, experimental)
     # So exibido se --allow-efi-fallback foi usado em algum host (algum
     # registro com resultado OK-efiboot/FALHOU-efiboot/TRAVADO-POS-REBOOT/
     # BLOQUEADO-*). Destaque especial para TRAVADO-POS-REBOOT: e o unico
@@ -411,7 +416,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # requer verificacao fisica imediata".
     # =====================================================================
     if efiboot_total > 0:
-        _escreve("  --- Mecanismo 4 (boot EFI, experimental) ---")
+        _escreve("  --- Mecanismo 3 (boot EFI, experimental) ---")
         _escreve("  OK (OK-efiboot)            : {:3d}  -- gravado com sucesso via reboot/EFI Shell".format(
             efiboot_ok))
         _escreve("  Falhou (FALHOU-efiboot)    : {:3d}  -- host voltou do reboot mas a tag nao conferiu".format(
@@ -422,7 +427,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
             _escreve("  *** TRAVADO-POS-REBOOT ***  : {:3d}  -- HOST(S) NAO RESPONDERAM APOS O REBOOT -- "
                      "VERIFICACAO FISICA IMEDIATA".format(efiboot_travado))
         _escreve("  " + "-" * 60)
-        _escreve("  Total Mecanismo 4          : {:3d}".format(efiboot_total))
+        _escreve("  Total Mecanismo 3          : {:3d}".format(efiboot_total))
         _escreve("")
 
     # =====================================================================

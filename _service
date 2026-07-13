@@ -2,7 +2,7 @@
   <service name="tar_scm">
     <param name="scm">git</param>
     <param name="url">https://github.com/mariosergiosl/update_dmi_tag.git</param>
-    <param name="revision">v2.1.13</param>
+    <param name="revision">v2.1.14</param>
     <param name="versionformat">@PARENT_TAG@</param>
     <param name="versionrewrite-pattern">v(.*)</param>
     <param name="changesgenerate">enable</param>
