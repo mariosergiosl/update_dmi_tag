@@ -17,7 +17,13 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - tenta_escrever_tag_remoto/tenta_teste_
+#                        escrita_remoto passam a detectar a assinatura de
+#                        incompatibilidade de firmware (ver constants.py)
+#                        e retornar INCOMPATIVEL-HW em vez do FALHOU-todos
+#                        generico. Novo parametro caminho_log_efi permite
+#                        log isolado por host em --parallel N>1.
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -66,7 +72,10 @@
 #
 # =======================================================================
 
-from .constants import MecanismoIndisponivelError, TodosMecanismosFalharam
+from .constants import (
+    MecanismoIndisponivelError, TodosMecanismosFalharam,
+    eh_incompatibilidade_firmware,
+)
 from .logging_utils import gravar_log, gravar_log_remoto
 from .bios_amidelnx import executa_amidelnx_local, executa_amidelnx_remoto
 from .bios_sysfs import executa_amibios_local, executa_amibios_remoto
@@ -101,9 +110,11 @@ def tenta_escrever_tag_local(tag, args, kmp_instalado,
 
     dry_run = not args.write
 
+    detalhe_amidelnx = detalhe_amibios = ""
+
     _log("INFO", "--- Tentando Mecanismo 1: amidelnx_64 ---")
     try:
-        sucesso = executa_amidelnx_local(
+        sucesso, detalhe_amidelnx = executa_amidelnx_local(
             tag, args.amide_local_path, ["sudo"],
             args.log_file, args.verbose, args.csv,
             dry_run=dry_run, caminho_log_local=caminho_log_local,
@@ -113,10 +124,11 @@ def tenta_escrever_tag_local(tag, args, kmp_instalado,
         _log("WARNING", "amidelnx_64 nao confirmou gravacao; tentando fallback.")
     except MecanismoIndisponivelError as e:
         _log("WARNING", "amidelnx_64 indisponivel: {}".format(e))
+        detalhe_amidelnx = str(e)
 
     _log("INFO", "--- Tentando Mecanismo 2: amibios_dmi (sysfs) ---")
     try:
-        sucesso = executa_amibios_local(
+        sucesso, detalhe_amibios = executa_amibios_local(
             tag, args.target, kmp_instalado,
             args.module_repo_url, args.module_package,
             args.log_file, args.verbose, args.csv,
@@ -127,18 +139,36 @@ def tenta_escrever_tag_local(tag, args, kmp_instalado,
         _log("ERROR", "amibios_dmi tambem nao confirmou gravacao.")
     except MecanismoIndisponivelError as e:
         _log("ERROR", "amibios_dmi indisponivel: {}".format(e))
+        detalhe_amibios = str(e)
 
     if not dry_run:
+        # Assinaturas conhecidas de incompatibilidade de firmware em ambos
+        # os mecanismos (ver constants.SINAIS_INCOMPATIBILIDADE_HW):
+        # sinaliza distinto de uma falha generica/transitoria.
+        if (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                and eh_incompatibilidade_firmware(detalhe_amibios)):
+            raise TodosMecanismosFalharam(
+                "INCOMPATIVEL-HW: firmware rejeitou ambos os mecanismos "
+                "para tag '{}' (amidelnx: {}; amibios: {}).".format(
+                    tag, detalhe_amidelnx, detalhe_amibios))
         raise TodosMecanismosFalharam(
             "Nenhum mecanismo obteve sucesso para tag '{}'.".format(tag))
     return "DRY-RUN"
 
 
 def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
-                               caminho_log_remoto, caminho_log_local):
+                               caminho_log_remoto, caminho_log_local,
+                               caminho_log_efi=None):
     """
     NAME: tenta_escrever_tag_remoto
     DESCRIPTION: Cascata de mecanismos remota. Retorna string descritiva.
+    PARAMETER: caminho_log_efi - log dedicado do Mecanismo 3. Se None
+                                 (default), usa args.log_efi (compat com
+                                 modo sequencial). Em --parallel N>1, o
+                                 chamador (__main__.py) passa um caminho
+                                 por host, isolado, para evitar escrita
+                                 concorrente no mesmo arquivo entre
+                                 threads (ver ROADMAP.md).
     RETURNS: str, resultado descritivo
     """
     def _log(nivel, msg):
@@ -146,10 +176,11 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
                           nivel, msg, caminho_log_local, args.verbose, args.csv)
 
     dry_run = not args.write
+    detalhe_amidelnx = detalhe_amibios = ""
 
     _log("INFO", "--- Tentando Mecanismo 1: amidelnx_64 ---")
     try:
-        sucesso = executa_amidelnx_remoto(
+        sucesso, detalhe_amidelnx = executa_amidelnx_remoto(
             ip, ssh_user, sudo_cmd, tag,
             args.amide_remote_path, args.amide_local_path,
             caminho_log_remoto, caminho_log_local,
@@ -162,10 +193,11 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
         _log("WARNING", "amidelnx_64 nao confirmou gravacao; tentando fallback.")
     except MecanismoIndisponivelError as e:
         _log("WARNING", "amidelnx_64 indisponivel: {}".format(e))
+        detalhe_amidelnx = str(e)
 
     _log("INFO", "--- Tentando Mecanismo 2: amibios_dmi (sysfs) ---")
     try:
-        sucesso = executa_amibios_remoto(
+        sucesso, detalhe_amibios = executa_amibios_remoto(
             ip, ssh_user, sudo_cmd, tag,
             args.target, caminho_log_remoto, caminho_log_local,
             args.verbose, args.csv, dry_run=dry_run,
@@ -177,21 +209,40 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
         _log("ERROR", "amibios_dmi tambem nao confirmou gravacao.")
     except MecanismoIndisponivelError as e:
         _log("ERROR", "amibios_dmi indisponivel: {}".format(e))
+        detalhe_amibios = str(e)
 
     if not dry_run:
         _log("ERROR", "Todos os mecanismos falharam para tag '{}' em {}.".format(tag, ip))
+
+        # Assinaturas conhecidas de incompatibilidade de firmware em ambos
+        # os mecanismos (ver constants.SINAIS_INCOMPATIBILIDADE_HW),
+        # constatado em campo (Dell Precision 5520, 2026-07-14): distingue
+        # "essa BIOS nao implementa a interface AMI" de uma falha
+        # generica/transitoria (rede, sudo, timeout).
+        incompativel_1e2 = (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                             and eh_incompatibilidade_firmware(detalhe_amibios))
+        if incompativel_1e2:
+            _log("WARNING",
+                 "Assinatura de incompatibilidade de firmware detectada em "
+                 "ambos os mecanismos (amidelnx: {}; amibios: {}).".format(
+                     detalhe_amidelnx, detalhe_amibios))
 
         if getattr(args, "allow_efi_fallback", False):
             # Import local: boot_efi.py e um modulo experimental, isolado do
             # restante da cascata; so e importado quando a flag e usada.
             from .boot_efi import executa_boot_efi_remoto
+            log_efi_efetivo = (caminho_log_efi if caminho_log_efi is not None
+                                else getattr(args, "log_efi", ""))
             _log("WARNING",
                  "Mecanismos 1/2 falharam, tentando Mecanismo 3 (boot EFI). "
-                 "Ver log dedicado: {}".format(getattr(args, "log_efi", "")))
+                 "Ver log dedicado: {}".format(log_efi_efetivo))
             return executa_boot_efi_remoto(
                 ip, ssh_user, sudo_cmd, tag, args,
                 caminho_log_remoto, caminho_log_local,
-                getattr(args, "log_efi", ""))
+                log_efi_efetivo)
+
+        if incompativel_1e2:
+            return "INCOMPATIVEL-HW"
 
     return "FALHOU-todos"
 
@@ -239,9 +290,11 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
 
     def _executa_cascata(tag_teste):
         """Executa cascata Mec1->Mec2 com tag_teste. Retorna (resultado, sucesso)."""
+        detalhe_amidelnx = detalhe_amibios = ""
+
         _log("INFO", "[TEST-WRITE] --- Mecanismo 1: amidelnx_64 ---")
         try:
-            sucesso = executa_amidelnx_remoto(
+            sucesso, detalhe_amidelnx = executa_amidelnx_remoto(
                 ip, ssh_user, sudo_cmd, tag_teste,
                 args.amide_remote_path, args.amide_local_path,
                 caminho_log_remoto, caminho_log_local,
@@ -259,10 +312,11 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
         except MecanismoIndisponivelError as e:
             _log("WARNING",
                  "[TEST-WRITE] Mecanismo 1 indisponivel: {}".format(e))
+            detalhe_amidelnx = str(e)
 
         _log("INFO", "[TEST-WRITE] --- Mecanismo 2: amibios_dmi (sysfs) ---")
         try:
-            sucesso = executa_amibios_remoto(
+            sucesso, detalhe_amibios = executa_amibios_remoto(
                 ip, ssh_user, sudo_cmd, tag_teste,
                 args.target, caminho_log_remoto, caminho_log_local,
                 args.verbose, args.csv, dry_run=False,
@@ -278,6 +332,15 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
         except MecanismoIndisponivelError as e:
             _log("ERROR",
                  "[TEST-WRITE] Mecanismo 2 indisponivel: {}".format(e))
+            detalhe_amibios = str(e)
+
+        if (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                and eh_incompatibilidade_firmware(detalhe_amibios)):
+            _log("ERROR",
+                 "[TEST-WRITE] Ambos os mecanismos falharam com assinatura de "
+                 "incompatibilidade de firmware conhecida (amidelnx: {}; "
+                 "amibios: {}).".format(detalhe_amidelnx, detalhe_amibios))
+            return "INCOMPATIVEL-HW", False
 
         _log("ERROR",
              "[TEST-WRITE] Ambos os mecanismos falharam, modelo "

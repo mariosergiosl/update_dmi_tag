@@ -17,7 +17,12 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - executa_amibios_local/remoto passam a
+#                        retornar tupla (sucesso, detalhe) em vez de bool
+#                        (ver bios_amidelnx.py). Corrige tambem um crash
+#                        nao tratado (OSError) na escrita local do sysfs,
+#                        que antes propagava sem captura ate o chamador.
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -164,7 +169,9 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
                suprime_tela      - suprime stdout
                dry_run           - se True, nao executa a gravacao
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool, True se a gravacao foi bem-sucedida
+    RETURNS: tuple(bool, str), (sucesso, detalhe) -- ver
+             bios_amidelnx.executa_amidelnx_local para o motivo desta
+             mudanca de assinatura.
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -214,14 +221,14 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
         # Otimizacao: evita escrita SMI redundante
         if valor_antigo == tag:
             _log("INFO", "Valor na BIOS ja esta atualizado. Gravacao SMI ignorada.")
-            return True
+            return True, "valor ja atualizado (sem gravacao SMI)"
 
         if dry_run:
             _log("WARNING",
                  "[DRY-RUN] amibios_dmi: valor que seria gravado: '{}'".format(tag))
             _log("WARNING",
                  "[DRY-RUN] Para gravar, passe a flag -w ou --write.")
-            return False
+            return False, "DRY-RUN"
 
         # Gravacao fisica no sysfs
         _log("INFO", "Mecanismo 2: gravando via sysfs amibios_dmi: {}".format(tag))
@@ -233,8 +240,13 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
             raise PermissionError(
                 "Sem permissao de escrita no sysfs: {}".format(sysfs_target))
 
-        with open(sysfs_target, "w") as f:
-            f.write(tag)
+        try:
+            with open(sysfs_target, "w") as f:
+                f.write(tag)
+        except OSError as e:
+            detalhe = "sysfs rejeitou a escrita: {}".format(e)
+            _log("ERROR", "amibios_dmi: falha na escrita ({}).".format(detalhe))
+            return False, detalhe
         _log("INFO", "Operacao de escrita concluida.")
 
         # Auditoria pos-escrita
@@ -244,16 +256,15 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
             _log("INFO", "Valor auditado pos-escrita: '{}'".format(valor_novo))
         except Exception as e:
             _log("ERROR", "Falha na leitura de auditoria pos-escrita: {}".format(e))
-            return False
+            return False, "falha na leitura de auditoria pos-escrita: {}".format(e)
 
         if valor_novo == tag:
             _log("INFO", "amibios_dmi: gravacao confirmada e auditada.")
-            return True
+            return True, "gravacao confirmada e auditada"
 
-        _log("ERROR",
-             "amibios_dmi: integridade falhou, esperado '{}', lido '{}'".format(
-                 tag, valor_novo))
-        return False
+        detalhe = "integridade falhou, esperado '{}', lido '{}'".format(tag, valor_novo)
+        _log("ERROR", "amibios_dmi: {}".format(detalhe))
+        return False, detalhe
 
     finally:
         # Unload garantido se o modulo foi carregado temporariamente
@@ -285,7 +296,8 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                dry_run           - se True, nao executa a gravacao
                module_repo_url   - repo zypper (para instalacao futura)
                module_package    - pacote KMP (para instalacao futura)
-    RETURNS: bool, True se a gravacao foi bem-sucedida
+    RETURNS: tuple(bool, str), (sucesso, detalhe) -- ver
+             executa_amibios_local.
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -340,14 +352,14 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
         # Otimizacao: evita escrita SMI redundante
         if valor_antigo == tag:
             _log("INFO", "Valor na BIOS ja esta atualizado. Gravacao SMI ignorada.")
-            return True
+            return True, "valor ja atualizado (sem gravacao SMI)"
 
         if dry_run:
             _log("WARNING",
                  "[DRY-RUN] amibios_dmi remoto: valor que seria gravado: '{}'".format(tag))
             _log("WARNING",
                  "[DRY-RUN] Para gravar, passe a flag -w ou --write.")
-            return False
+            return False, "DRY-RUN"
 
         # Gravacao fisica via SSH
         _log("INFO",
@@ -368,7 +380,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                 detalhe = "rc={}, sysfs rejeitou a escrita sem mensagem".format(rc_w)
             _log("ERROR",
                  "amibios_dmi remoto: falha na escrita ({}).".format(detalhe))
-            return False
+            return False, detalhe
 
         _log("INFO", "Operacao de escrita remota concluida.")
 
@@ -380,12 +392,11 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
 
         if valor_novo == tag:
             _log("INFO", "amibios_dmi remoto: gravacao confirmada e auditada.")
-            return True
+            return True, "gravacao confirmada e auditada"
 
-        _log("ERROR",
-             "amibios_dmi remoto: integridade falhou, esperado '{}', lido '{}'".format(
-                 tag, valor_novo))
-        return False
+        detalhe = "integridade falhou, esperado '{}', lido '{}'".format(tag, valor_novo)
+        _log("ERROR", "amibios_dmi remoto: {}".format(detalhe))
+        return False, detalhe
 
     finally:
         # Unload remoto garantido se o modulo foi carregado temporariamente

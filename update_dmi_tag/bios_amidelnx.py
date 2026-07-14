@@ -15,7 +15,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - executa_amidelnx_local/remoto passam a
+#                        retornar tupla (sucesso, detalhe) em vez de bool,
+#                        expondo o motivo do erro para a deteccao de
+#                        incompatibilidade de firmware em write_cascade.py.
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -113,7 +117,11 @@ def executa_amidelnx_local(tag, caminho_amide, sudo_cmd_lista,
                suprime_tela      - suprime stdout
                dry_run           - se True, nao executa a gravacao
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool, True se a gravacao foi bem-sucedida
+    RETURNS: tuple(bool, str), (sucesso, detalhe) -- detalhe e a
+             mensagem de erro/confirmacao, usada pelo chamador (ver
+             write_cascade.py) para distinguir falha generica de
+             incompatibilidade de firmware conhecida (ver
+             constants.eh_incompatibilidade_firmware).
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -132,7 +140,7 @@ def executa_amidelnx_local(tag, caminho_amide, sudo_cmd_lista,
              "[DRY-RUN] amidelnx_64: valor que seria gravado: '{}'".format(tag))
         _log("WARNING",
              "[DRY-RUN] Para gravar, passe a flag -w ou --write.")
-        return False
+        return False, "DRY-RUN"
 
     _log("INFO", "Mecanismo 1: executando amidelnx_64 /ca {}".format(tag))
     try:
@@ -149,15 +157,15 @@ def executa_amidelnx_local(tag, caminho_amide, sudo_cmd_lista,
             resultado.stdout, resultado.stderr)
         if sucesso:
             _log("INFO", "amidelnx_64: gravacao confirmada -- {}".format(detalhe))
-            return True
+            return True, detalhe
         _log("ERROR", "amidelnx_64: falha -- {}".format(detalhe))
-        return False
+        return False, detalhe
     except subprocess.TimeoutExpired:
         _log("ERROR", "amidelnx_64: timeout (30s) durante execucao")
-        return False
+        return False, "timeout (30s) durante execucao"
     except Exception as e:
         _log("ERROR", "amidelnx_64: excecao ao executar -- {}".format(e))
-        return False
+        return False, "excecao ao executar: {}".format(e)
 
 
 def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
@@ -185,7 +193,8 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
                dry_run            - se True, nao executa a gravacao
                amide_repo_url     - repo zypper (reservado para uso futuro)
                amide_package      - pacote zypper (reservado para uso futuro)
-    RETURNS: bool, True se a gravacao foi bem-sucedida
+    RETURNS: tuple(bool, str), (sucesso, detalhe) -- ver
+             executa_amidelnx_local.
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -206,7 +215,7 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
              "[DRY-RUN] amidelnx_64 remoto: valor que seria gravado: '{}'".format(tag))
         _log("WARNING",
              "[DRY-RUN] Para gravar, passe a flag -w ou --write.")
-        return False
+        return False, "DRY-RUN"
 
     _log("INFO", "Mecanismo 1: executando amidelnx_64 /ca {} em {}".format(tag, ip))
 
@@ -254,8 +263,8 @@ def executa_amidelnx_remoto(ip, ssh_user, sudo_cmd, tag,
 
     if sucesso:
         _log("INFO", "amidelnx_64: gravacao confirmada -- {}".format(detalhe))
-        return True
+        return True, detalhe
 
     _log("ERROR", "amidelnx_64: falha (rc={}) -- {}".format(rc, detalhe))
-    return False
+    return False, detalhe
 

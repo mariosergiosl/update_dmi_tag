@@ -13,7 +13,12 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - adiciona descricoes e contadores para
+#                        os novos status INCOMPATIVEL-HW e INCOMPATIVEL-
+#                        efiboot (ver write_cascade.py/boot_efi.py).
+#                        Coluna Resultado alargada de 18 para 21
+#                        caracteres para caber INCOMPATIVEL-efiboot.
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -139,8 +144,10 @@ _DESCRICOES_RESULTADO = (
     ("OK-amibios",  "Sucesso. Gravacao confirmada via amibios_dmi/sysfs (Mecanismo 2, fallback)."),
     ("DRY-RUN",     "Leitura realizada com sucesso (Simulacao). Nenhuma gravacao executada."),
     ("TRAVADO-POS-REBOOT", "ATENCAO: Mecanismo 3 reiniciou o host e ele nao respondeu via SSH, requer intervencao fisica."),
+    ("INCOMPATIVEL-efiboot", "Hardware incompativel: o proprio AMIDEEFIx64.EFI rejeitou a gravacao em pre-boot (assinatura de firmware conhecida, ver log dedicado). Nao vale a pena repetir sem reflash de BIOS."),
     ("FALHOU-efiboot", "Mecanismo 3 tentado (host voltou do reboot) mas a tag nao conferiu."),
     ("BLOQUEADO-",  "Mecanismo 3 nao foi tentado por seguranca (Secure Boot, TPM, espaco, etc., ver log dedicado)."),
+    ("INCOMPATIVEL-HW", "Hardware incompativel: os Mecanismos 1 e 2 rejeitaram a gravacao com assinatura de firmware conhecida (ver log). Nao vale a pena repetir sem --allow-efi-fallback ou reflash de BIOS."),
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
     ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
@@ -257,7 +264,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         "bem_conf":       14,
         "bem_usado":      14,
         "tag_depois":     15,
-        "resultado":      18,
+        "resultado":      21,
         "teste_escrita":  15,
         "bbconfig_sync":  17,
         "mac":            52,
@@ -317,7 +324,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     CS = {
         "bios":       15,
         "flag_w":      5,
-        "resultado":  18,
+        "resultado":  21,
         "qtd":         5,
         "observacao": 80,
     }
@@ -364,6 +371,12 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # Falha na cascata de mecanismos (escrita foi tentada e rejeitada pela BIOS)
     falhou = sum(1 for r in registros if str(r.get("resultado","")).startswith("FALHOU"))
 
+    # Hardware incompativel: Mecanismos 1 e 2 rejeitaram com assinatura de
+    # firmware conhecida (ver constants.SINAIS_INCOMPATIBILIDADE_HW). Status
+    # proprio, distinto do FALHOU generico: nao vale a pena repetir sem
+    # --allow-efi-fallback ou reflash de BIOS (ver write_cascade.py).
+    incompativel_hw = sum(1 for r in registros if r.get("resultado") == "INCOMPATIVEL-HW")
+
     # Sem privilegio sudo (escrita nao foi tentada)
     sem_sudo = sum(1 for r in registros if r.get("resultado") == "SEM-SUDO")
 
@@ -377,26 +390,30 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     inacessivel = sum(1 for r in registros if r.get("resultado") == "INACESSIVEL")
 
     # Mecanismo 3 (boot EFI, experimental, ver boot_efi.py)
-    efiboot_ok        = sum(1 for r in registros if r.get("resultado") == "OK-efiboot")
-    efiboot_falhou    = sum(1 for r in registros if r.get("resultado") == "FALHOU-efiboot")
-    efiboot_travado   = sum(1 for r in registros if r.get("resultado") == "TRAVADO-POS-REBOOT")
-    efiboot_bloqueado = sum(1 for r in registros if str(r.get("resultado", "")).startswith("BLOQUEADO-"))
-    efiboot_total     = efiboot_ok + efiboot_falhou + efiboot_travado + efiboot_bloqueado
+    efiboot_ok           = sum(1 for r in registros if r.get("resultado") == "OK-efiboot")
+    efiboot_falhou       = sum(1 for r in registros if r.get("resultado") == "FALHOU-efiboot")
+    efiboot_incompativel = sum(1 for r in registros if r.get("resultado") == "INCOMPATIVEL-efiboot")
+    efiboot_travado      = sum(1 for r in registros if r.get("resultado") == "TRAVADO-POS-REBOOT")
+    efiboot_bloqueado    = sum(1 for r in registros if str(r.get("resultado", "")).startswith("BLOQUEADO-"))
+    efiboot_total        = (efiboot_ok + efiboot_falhou + efiboot_incompativel
+                             + efiboot_travado + efiboot_bloqueado)
 
     # Qualquer outro status nao mapeado acima.
     # efiboot_falhou NAO entra aqui: "FALHOU-efiboot" ja comeca com "FALHOU"
     # e portanto ja esta contado dentro de "falhou" acima. So subtraimos os
-    # 3 status de Mecanismo 3 que nao tem bucket proprio nos contadores
-    # classicos (OK-efiboot, TRAVADO-POS-REBOOT, BLOQUEADO-*), subtrair
-    # efiboot_total inteiro contaria FALHOU-efiboot duas vezes.
-    outros = (total - ok_total - dryrun - falhou - sem_sudo - pendente
-              - invalido - inacessivel
-              - efiboot_ok - efiboot_travado - efiboot_bloqueado)
+    # status de Mecanismo 3 que nao tem bucket proprio nos contadores
+    # classicos (OK-efiboot, INCOMPATIVEL-efiboot, TRAVADO-POS-REBOOT,
+    # BLOQUEADO-*), subtrair efiboot_total inteiro contaria FALHOU-efiboot
+    # duas vezes. incompativel_hw tambem tem bucket proprio, subtrai a parte.
+    outros = (total - ok_total - dryrun - falhou - incompativel_hw - sem_sudo
+              - pendente - invalido - inacessivel
+              - efiboot_ok - efiboot_incompativel - efiboot_travado - efiboot_bloqueado)
 
     _escreve("  Gravacao OK (amidelnx_64)  : {:3d}  -- escrita confirmada via Mecanismo 1".format(ok_amidelnx))
     _escreve("  Gravacao OK (amibios_dmi)  : {:3d}  -- escrita confirmada via Mecanismo 2 (fallback)".format(ok_amibios))
     _escreve("  Simulacao (DRY-RUN)        : {:3d}  -- apenas leitura, nenhuma gravacao executada".format(dryrun))
     _escreve("  Falha na escrita (FALHOU)  : {:3d}  -- cascata tentada, BIOS rejeitou ambos os mecanismos".format(falhou))
+    _escreve("  Incompativel (INCOMPATIVEL-HW): {:3d}  -- Mecanismos 1/2 rejeitados com assinatura de firmware conhecida".format(incompativel_hw))
     _escreve("  Sem privilegio (SEM-SUDO)  : {:3d}  -- usuario sem sudo ou --sudo-pass incorreto/ausente".format(sem_sudo))
     _escreve("  BEM pendente (PENDENTE)    : {:3d}  -- BEM_NUMERO ausente no BBconfig.conf do host".format(pendente))
     _escreve("  BEM invalido (INVALIDO)    : {:3d}  -- BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)".format(invalido))
@@ -421,6 +438,8 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
             efiboot_ok))
         _escreve("  Falhou (FALHOU-efiboot)    : {:3d}  -- host voltou do reboot mas a tag nao conferiu".format(
             efiboot_falhou))
+        _escreve("  Incompativel (INCOMPATIVEL-efiboot): {:3d}  -- AMIDEEFIx64.EFI rejeitou com assinatura de firmware conhecida".format(
+            efiboot_incompativel))
         _escreve("  Bloqueado (BLOQUEADO-*)    : {:3d}  -- nao tentado por seguranca (ver log dedicado)".format(
             efiboot_bloqueado))
         if efiboot_travado > 0:

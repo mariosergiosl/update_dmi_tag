@@ -40,7 +40,22 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - corrige bug real encontrado em hardware
+#                        (nao aparecia em VM): o shell inicia sem nenhum
+#                        drive mapeado como atual ("Shell>", nao
+#                        "FS0:\>"), entao o "cd" relativo falhava e o
+#                        AMIDEEFIx64.EFI nunca era encontrado. Corrigido
+#                        com "FS0:" explicito antes do cd. Adiciona
+#                        captura da saida do AMIDEEFIx64.EFI no log
+#                        (decodificada de UTF-16LE), deteccao de
+#                        INCOMPATIVEL-efiboot via assinatura conhecida, e
+#                        o bypass --force-efi-secureboot (PERIGOSO, teste
+#                        de campo controlado). Corrige tambem uma linha
+#                        de log fora do padrao quando mokutil retorna
+#                        mais de uma linha ("Platform is in Setup Mode").
+#                        Validado em campo: Dell Precision 5520, Dell
+#                        Latitude 5320 (ver Docs_Test_boot/).
 # CREATED: 2026-07-08
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -86,6 +101,7 @@ from .constants import (
     DEFAULT_EFI_BOOT_LABEL,
     DEFAULT_EFI_MIN_FREE_KB,
     DEFAULT_EFI_REBOOT_TIMEOUT,
+    eh_incompatibilidade_firmware,
 )
 from .logging_utils import gravar_log, gravar_log_remoto, gravar_log_local_consolidado
 from .ssh_utils import ssh_run, testa_porta_ssh, testa_conexao_ssh, _scp_arquivo_com_erro
@@ -125,7 +141,8 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
                                     verbose, suprime_tela,
                                     esp_mount_point=DEFAULT_ESP_MOUNT_POINT,
                                     boot_label=DEFAULT_EFI_BOOT_LABEL,
-                                    min_free_kb=DEFAULT_EFI_MIN_FREE_KB):
+                                    min_free_kb=DEFAULT_EFI_MIN_FREE_KB,
+                                    force_secureboot=False):
     """
     NAME: verifica_seguranca_efi_remoto
     DESCRIPTION: Bateria de checagens READ-ONLY que decide se e seguro
@@ -145,6 +162,11 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
                esp_mount_point            - ponto de montagem da ESP (default /boot/efi)
                boot_label                 - label usado para checar colisao de entrada
                min_free_kb                - espaco livre minimo exigido na ESP (KB)
+               force_secureboot           - PERIGOSO. Se True, pula o bloqueio de
+                                            Secure Boot ativo (ver --force-efi-
+                                            secureboot em __main__.py). Uso
+                                            restrito a teste de campo controlado,
+                                            com alguem fisicamente presente.
     RETURNS: None, levanta SegurancaEfiBloqueadaError se qualquer
              checagem falhar. Retorno normal (sem excecao) significa
              seguro para prosseguir.
@@ -182,10 +204,23 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
     rc, out, _ = _ssh("mokutil --sb-state 2>/dev/null")
     if rc == 0 and out:
         if "enabled" in out.lower():
-            motivo = "Secure Boot ativo, binario EFI nao assinado seria recusado pelo firmware."
-            _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
-            raise SegurancaEfiBloqueadaError(motivo)
-        _log("INFO", "[MEC3] Secure Boot: {}".format(out))
+            if force_secureboot:
+                _log("WARNING",
+                     "[MEC3] *** --force-efi-secureboot ATIVO *** Secure Boot "
+                     "esta habilitado, mas o bloqueio foi pulado via flag "
+                     "explicita. A firmware pode recusar o binario nao "
+                     "assinado e exigir intervencao fisica para prosseguir "
+                     "(tela de Secure Boot Violation).")
+            else:
+                motivo = "Secure Boot ativo, binario EFI nao assinado seria recusado pelo firmware."
+                _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
+                raise SegurancaEfiBloqueadaError(motivo)
+        # mokutil pode retornar mais de uma linha (ex: "SecureBoot disabled"
+        # + "Platform is in Setup Mode", visto em campo na VM de teste).
+        # Sem tratar, a 2a linha vaza no log sem timestamp/prefixo (fora do
+        # padrao). Junta em uma linha so, igual ao resto do pacote (ver
+        # bios_amidelnx.py, free_out).
+        _log("INFO", "[MEC3] Secure Boot: {}".format(out.replace("\n", " | ")))
     else:
         # mokutil ausente ou sem retorno claro: nao assume seguranca por
         # omissao. Aborta e exige verificacao manual.
@@ -365,7 +400,8 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
         verifica_seguranca_efi_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
             caminho_log_efi, args.verbose, args.csv,
-            esp_mount_point=esp, boot_label=label)
+            esp_mount_point=esp, boot_label=label,
+            force_secureboot=getattr(args, "force_efi_secureboot", False))
     except SegurancaEfiBloqueadaError as e:
         return "BLOQUEADO-{}".format(str(e)[:60])
 
@@ -403,10 +439,24 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     # O "cd" e necessario porque o shell auto-executa o startup.nsh com o
     # diretorio atual em FS0:\ (raiz da ESP), nao no diretorio onde o
     # proprio startup.nsh esta (validado em VM real, ver Docs_Test_boot/).
+    # FS0: selecionado explicitamente antes do cd -- constatado em teste
+    # real (Precision 5520, 2026-07-14) que o shell inicia sem nenhum
+    # drive mapeado como atual (prompt "Shell>", nao "FS0:\>"), entao
+    # "cd \caminho" relativo falhava com "Current directory not
+    # specified" e o AMIDEEFIx64.EFI nunca era encontrado (%lasterror%
+    # = 0xE, Not Found). Corrigido definitivamente aqui.
+    # BLOCO DE DEBUG TEMPORARIO (Precision 5520, 2026-07-14): a saida do
+    # AMIDEEFIx64.EFI e redirecionada para FS0:\amide_debug.log (fora de
+    # remoto_dir, de proposito -- _limpa_entrada_e_arquivos faz rm -rf no
+    # remoto_dir logo apos o reboot, e apagaria o log antes de conseguirmos
+    # ler). Lido via SSH e anexado ao log local mais abaixo. Reverter (esta
+    # linha + o bloco de leitura correspondente) apos o debug em campo.
     conteudo_nsh = (
         "echo -off\n"
-        "cd \\EFI\\{}\n"
-        "AMIDEEFIx64.EFI /CA \"{}\"\n"
+        "FS0:\n"
+        "cd \\EFI\\{0}\n"
+        "AMIDEEFIx64.EFI /CA \"{1}\" > FS0:\\amide_debug.log\n"
+        "echo Codigo de retorno (lasterror): %lasterror% >> FS0:\\amide_debug.log\n"
         "reset\n"
     ).format(subdir, tag)
     caminho_nsh_tmp = "{}.nsh_tmp_{}".format(caminho_log_local or "efi_boot", ip)
@@ -535,6 +585,36 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
 
     _log("INFO", "[MEC3] Host respondeu via SSH novamente apos o reboot.")
 
+    # Le o log de saida do AMIDEEFIx64.EFI (gravado em FS0:\amide_debug.log
+    # pelo startup.nsh, fora de remoto_dir de proposito -- ver comentario na
+    # geracao do startup.nsh, acima), anexa ao log local/efi, depois apaga o
+    # arquivo do ESP. O UEFI Shell grava a saida redirecionada (">") em
+    # UTF-16LE com BOM; decodifica antes de logar e de checar assinaturas de
+    # incompatibilidade, senao o texto fica ilegivel ("F a i l   t o ...").
+    saida_dbg_limpa = ""
+    rc_dbg, saida_dbg, _ = _ssh("{} cat /boot/efi/amide_debug.log 2>/dev/null".format(sudo_cmd))
+    if rc_dbg == 0 and saida_dbg.strip():
+        # ssh_run decodifica o stdout byte-a-byte (locale padrao, ver
+        # subprocess.run com universal_newlines=True em ssh_utils.py), entao
+        # saida_dbg preserva 1:1 os bytes originais do arquivo. Reencode com
+        # latin-1 (bijetivo para 0-255) para recuperar os bytes crus, depois
+        # decodifica como UTF-16LE de verdade (o UEFI Shell grava a saida
+        # redirecionada ">" nesse formato, com BOM FF FE no inicio).
+        try:
+            saida_dbg_limpa = saida_dbg.encode("latin-1", errors="ignore").decode(
+                "utf-16-le", errors="ignore")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            saida_dbg_limpa = saida_dbg
+        saida_dbg_limpa = saida_dbg_limpa.lstrip(chr(0xFEFF)).strip()
+        _log("INFO", "[MEC3][DEBUG] Saida do AMIDEEFIx64.EFI capturada no boot:")
+        for linha_dbg in saida_dbg_limpa.splitlines():
+            linha_dbg = linha_dbg.strip()
+            if linha_dbg:
+                _log("INFO", "[MEC3][DEBUG]   {}".format(linha_dbg))
+        _ssh("{} rm -f /boot/efi/amide_debug.log".format(sudo_cmd))
+    else:
+        _log("WARNING", "[MEC3][DEBUG] amide_debug.log nao encontrado ou vazio na ESP.")
+
     # 6. Confirma o valor gravado e limpa a entrada de boot + arquivos da ESP.
     rc, tag_lida, _ = _ssh("{} dmidecode -s chassis-asset-tag 2>/dev/null".format(sudo_cmd))
     tag_lida = tag_lida.strip()
@@ -543,6 +623,19 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     if rc == 0 and tag_lida == tag:
         _log("INFO", "[MEC3] Tag confirmada apos reboot: '{}'.".format(tag_lida))
         return "OK-efiboot"
+
+    # Assinatura conhecida de incompatibilidade de firmware na propria
+    # saida do AMIDEEFIx64.EFI (ver constants.SINAIS_INCOMPATIBILIDADE_HW),
+    # constatado em campo (Dell Precision 5520, 2026-07-14): "Fail to
+    # initialize SMBIOS" / "DMI Data write failed", rodando em pre-boot,
+    # sem SO/kernel envolvido -- rejeicao da propria firmware, nao um
+    # problema transitorio do Mecanismo 3 em si.
+    if eh_incompatibilidade_firmware(saida_dbg_limpa):
+        _log("ERROR",
+             "[MEC3] Tag apos reboot ('{}') nao confere com o esperado ('{}'). "
+             "Assinatura de incompatibilidade de firmware detectada na saida "
+             "do AMIDEEFIx64.EFI (ver [MEC3][DEBUG] acima).".format(tag_lida, tag))
+        return "INCOMPATIVEL-efiboot"
 
     _log("ERROR", "[MEC3] Tag apos reboot ('{}') nao confere com o esperado ('{}').".format(
         tag_lida, tag))
