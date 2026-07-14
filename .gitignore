@@ -5,6 +5,8 @@ update_git.bash
 .claude/
 amidelnx_64
 *.log
+logs/
+hosts_inacessiveis_*.txt
 bb_repo.conf
 efi_boot/docs/
 efi_boot/dmi-atm/AMIDEEFIx64.EFI

@@ -30,7 +30,18 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - adiciona --parallel N (EXPERIMENTAL):
+#                        pool de threads, log isolado por host em
+#                        logs/<timestamp>/hosts/, ticker de progresso no
+#                        stdout, merge no consolidado na ordem do arquivo
+#                        de hosts ao final. --parallel 1 (padrao) mantem
+#                        o loop sequencial original, sem mudanca de
+#                        comportamento. Adiciona tambem --force-efi-
+#                        secureboot (PERIGOSO, ver boot_efi.py), com
+#                        segunda confirmacao interativa separada.
+#                        Validado em campo com 3 hosts heterogeneos reais
+#                        (ver Docs_Test_boot/).
 # CREATED: 2026-05-29
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -105,6 +116,7 @@ Codificacao: US-ASCII (sem acentos nos comentarios ou codigo-fonte).
 
 import argparse
 import getpass
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -147,6 +159,100 @@ def _operador_execucao():
         return getpass.getuser()
     except Exception:
         return os.environ.get("USER") or os.environ.get("LOGNAME") or "desconhecido"
+
+
+def _processa_hosts_paralelo(hosts_validos, args, caminho_log_local):
+    """
+    NAME: _processa_hosts_paralelo
+    DESCRIPTION: Processa hosts_validos em ate args.parallel threads
+                 simultaneas (EXPERIMENTAL, v2.2). Cada host escreve no
+                 proprio arquivo de log, isolado, dentro de
+                 logs/<timestamp>/hosts/ (sem lock entre threads: hosts
+                 sao independentes, cada um com NVRAM/ESP/BBconfig
+                 proprios). Um ticker de progresso e impresso no stdout
+                 conforme cada host termina (ordem de conclusao, nao a
+                 ordem do arquivo de hosts). Ao final, os logs por host
+                 sao mesclados no consolidado (caminho_log_local) e no
+                 log dedicado do Mecanismo 3 (args.log_efi, se em uso),
+                 na ORDEM do arquivo de hosts (facil de achar um host
+                 especifico), nao na ordem de conclusao. A prova de
+                 kill: se o processo morrer no meio, os logs por host ja
+                 estao no disco em logs/<timestamp>/hosts/.
+    PARAMETER: hosts_validos     - lista de (ip, bem_lista, chave_ok),
+                                    ja triados na Fase 1
+               args              - namespace do argparse (args.parallel
+                                    define o tamanho do pool)
+               caminho_log_local - log consolidado onde os logs por host
+                                    serao mesclados ao final
+    RETURNS: list, registros na mesma ordem de hosts_validos (nao na
+             ordem de conclusao), prontos para summary.monta_tabela_resumo
+    """
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    log_dir = os.path.join(
+        os.path.dirname(os.path.abspath(caminho_log_local)),
+        "logs", timestamp)
+    hosts_dir = os.path.join(log_dir, "hosts")
+    os.makedirs(hosts_dir, exist_ok=True)
+
+    log_efi_ativo = bool(getattr(args, "allow_efi_fallback", False))
+
+    def _caminhos_host(ip):
+        base = os.path.join(hosts_dir, ip)
+        log_host = "{}.log".format(base)
+        log_efi_host = "{}.efi.log".format(base) if log_efi_ativo else None
+        return log_host, log_efi_host
+
+    def _worker(item):
+        ip, bem_lista, chave_ok = item
+        log_host, log_efi_host = _caminhos_host(ip)
+        registro = processa_host_remoto(
+            ip, bem_lista, args, log_host,
+            chave_ja_validada=chave_ok, caminho_log_efi=log_efi_host)
+        return ip, registro
+
+    total = len(hosts_validos)
+    concluidos = 0
+    falhas = 0
+    resultados_por_ip = {}
+
+    sys.stdout.write(
+        "[PARALELO] Iniciando {} host(s) com ate {} em voo simultaneamente. "
+        "Logs por host em: {}\n".format(total, args.parallel, hosts_dir))
+    sys.stdout.flush()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as executor:
+        futuros = [executor.submit(_worker, item) for item in hosts_validos]
+        for futuro in concurrent.futures.as_completed(futuros):
+            ip, registro = futuro.result()
+            resultados_por_ip[ip] = registro
+            concluidos += 1
+            resultado_str = str(registro.get("resultado", "N/D"))
+            if not (resultado_str.startswith("OK") or resultado_str == "DRY-RUN"):
+                falhas += 1
+            sys.stdout.write("[{}/{}] {} -> {} (falhas ate agora: {})\n".format(
+                concluidos, total, ip, resultado_str, falhas))
+            sys.stdout.flush()
+
+    # Merge no fim, sem lock, na ORDEM do arquivo de hosts (nao a ordem de
+    # conclusao): facil achar um host especifico no consolidado.
+    registros_ordenados = []
+    with open(caminho_log_local, "a", encoding="utf-8") as consolidado:
+        for ip, _bem, _chave in hosts_validos:
+            registros_ordenados.append(resultados_por_ip[ip])
+            log_host, _ = _caminhos_host(ip)
+            if os.path.isfile(log_host):
+                with open(log_host, "r", encoding="utf-8", errors="replace") as f:
+                    consolidado.write(f.read())
+
+    if log_efi_ativo and getattr(args, "log_efi", ""):
+        with open(args.log_efi, "a", encoding="utf-8") as efi_consolidado:
+            for ip, _bem, _chave in hosts_validos:
+                _, log_efi_host = _caminhos_host(ip)
+                if log_efi_host and os.path.isfile(log_efi_host):
+                    with open(log_efi_host, "r", encoding="utf-8", errors="replace") as f:
+                        efi_consolidado.write(f.read())
+
+    return registros_ordenados
 
 
 def checa_superusuario():
@@ -196,6 +302,23 @@ def main():
         default="",
         metavar="ARQUIVO",
         help="Arquivo de hosts (IP ou IP,BEM_NUMERO por linha). Ativa modo remoto.",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "EXPERIMENTAL (v2.2). Numero de hosts processados em paralelo "
+            "(padrao: 1, sequencial, comportamento identico as versoes "
+            "anteriores). Cada host escreve no proprio log isolado em "
+            "logs/<timestamp>/hosts/<IP>.log (sem lock); os logs sao "
+            "mesclados no consolidado ao final, na ordem do arquivo de "
+            "hosts (nao na ordem de conclusao). Concorrencia limitada por "
+            "decisao operacional: nunca processar o parque inteiro de uma "
+            "vez, o operador escolhe quantos hosts ficam em voo ao mesmo "
+            "tempo."
+        ),
     )
 
     # --- SSH ---
@@ -300,6 +423,25 @@ def main():
             "testados, entao nao ha FALHOU-todos para acionar o Mecanismo 3). "
             "Pede confirmacao interativa antes de iniciar; recusa aborta a "
             "execucao inteira. NAO pode ser usado sem terminal interativo."
+        ),
+    )
+    parser.add_argument(
+        "--force-efi-secureboot",
+        action="store_true",
+        dest="force_efi_secureboot",
+        help=(
+            "PERIGOSO, SOMENTE PARA TESTE DE CAMPO CONTROLADO. Pula a "
+            "checagem de Secure Boot do Mecanismo 3 (ver boot_efi.py), que "
+            "normalmente BLOQUEIA o mecanismo em hosts com Secure Boot "
+            "ativo. Com esta flag, o host reinicia mesmo assim; como o "
+            "bootx64.efi/AMIDEEFIx64.EFI nao sao assinados, a firmware "
+            "provavelmente recusa executa-los e mostra uma tela de 'Secure "
+            "Boot Violation' parada, exigindo alguem fisicamente presente "
+            "para dispensar a tela antes do host voltar (nao causa perda de "
+            "dados nem inutiliza o equipamento -- so trava esperando "
+            "confirmacao fisica). So tem efeito junto com --allow-efi-"
+            "fallback. Pede uma segunda confirmacao interativa, separada "
+            "da confirmacao padrao do --allow-efi-fallback."
         ),
     )
     parser.add_argument(
@@ -498,6 +640,25 @@ def main():
             sys.stderr.write("Execucao cancelada.\n")
             sys.exit(RC_SAFETY_ABORT)
 
+        # --force-efi-secureboot: segunda confirmacao, separada e mais
+        # explicita, porque esta flag pula uma checagem de seguranca real
+        # (nao so autoriza o reboot, ignora o motivo que normalmente
+        # impediria ele). So faz sentido para teste de campo controlado,
+        # com alguem fisicamente presente no equipamento.
+        if getattr(args, "force_efi_secureboot", False):
+            sys.stderr.write(
+                "AVISO ADICIONAL: --force-efi-secureboot esta ativo. A checagem "
+                "de Secure Boot do Mecanismo 3 sera PULADA. Se o host tiver "
+                "Secure Boot ativo, a firmware provavelmente vai recusar o "
+                "binario nao assinado e mostrar uma tela de 'Secure Boot "
+                "Violation' parada, exigindo alguem fisicamente presente para "
+                "dispensar a tela antes do host voltar. So use isso com "
+                "alguem junto do equipamento. Confirma? [s/N]: ")
+            resposta2 = input().strip().lower()
+            if resposta2 not in ("s", "sim", "y", "yes"):
+                sys.stderr.write("Execucao cancelada.\n")
+                sys.exit(RC_SAFETY_ABORT)
+
     # Em modo remoto, se --log-file nao foi passado explicitamente,
     # redireciona para arquivo local (evita Permission denied em /var/log).
     if args.hosts and args.log_file == DEFAULT_LOG_FILE:
@@ -592,11 +753,18 @@ def main():
         # Fase 2: Processamento ativo da BIOS nos hosts acessiveis.
         # chave_ok=True (confirmado na Fase 1) evita repetir o retest de
         # porta/chave SSH dentro de processa_host_remoto.
-        for ip, bem_lista, chave_ok in hosts_validos:
-            registro = processa_host_remoto(
-                ip, bem_lista, args, args.log_local,
-                chave_ja_validada=chave_ok)
-            registros.append(registro)
+        # --parallel N>1 (EXPERIMENTAL, v2.2): pool de threads com log por
+        # host e merge no final. --parallel 1 (padrao) mantem o loop
+        # sequencial original, comportamento identico as versoes anteriores.
+        if args.parallel > 1 and hosts_validos:
+            registros.extend(
+                _processa_hosts_paralelo(hosts_validos, args, args.log_local))
+        else:
+            for ip, bem_lista, chave_ok in hosts_validos:
+                registro = processa_host_remoto(
+                    ip, bem_lista, args, args.log_local,
+                    chave_ja_validada=chave_ok)
+                registros.append(registro)
 
         monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv,
                             write_ativo=args.write)

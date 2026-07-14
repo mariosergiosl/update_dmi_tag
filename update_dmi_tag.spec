@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.1.14
+Version:        2.2.0
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -80,6 +80,23 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Tue Jul 14 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.0-0
+- Execucao paralela (--parallel N, EXPERIMENTAL): pool de threads, log
+  isolado por host em logs/<timestamp>/hosts/, ticker de progresso no
+  stdout, merge no consolidado ao final na ordem do arquivo de hosts.
+  --parallel 1 (padrao) mantem o comportamento sequencial de sempre.
+- Corrige bug real do Mecanismo 3 em hardware fisico (nao aparecia em
+  VM): faltava selecionar o drive "FS0:" antes do "cd" no startup.nsh,
+  entao o AMIDEEFIx64.EFI nunca era encontrado.
+- Detecta automaticamente uma assinatura de incompatibilidade de
+  firmware (confirmada em campo em dois notebooks Dell) nos 3
+  mecanismos, reportando INCOMPATIVEL-HW/INCOMPATIVEL-efiboot em vez do
+  FALHOU generico.
+- Adiciona --force-efi-secureboot (PERIGOSO, teste de campo controlado):
+  pula o bloqueio de Secure Boot do Mecanismo 3 mediante dupla
+  confirmacao interativa.
+- Corrige um crash nao tratado (OSError) na escrita local do sysfs
+  (Mecanismo 2, modo standalone).
 * Sun Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.14-0
 - Renumeracao do mecanismo de boot EFI de "Mecanismo 4" para
   "Mecanismo 3" (elimina o buraco na numeracao da cascata: 1, 2, 3). So

@@ -37,7 +37,10 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
 #
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 #
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em

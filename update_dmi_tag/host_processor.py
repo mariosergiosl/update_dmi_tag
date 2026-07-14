@@ -15,7 +15,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - processa_host_remoto aceita o novo
+#                        parametro opcional caminho_log_efi (None usa
+#                        args.log_efi, modo sequencial; --parallel N>1
+#                        passa um caminho isolado por host).
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -90,7 +94,7 @@ from .write_cascade import tenta_escrever_tag_remoto, tenta_teste_escrita_remoto
 
 
 def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
-                          chave_ja_validada=False):
+                          chave_ja_validada=False, caminho_log_efi=None):
     """
     NAME: processa_host_remoto
     DESCRIPTION: Executa o fluxo completo de auditoria e gravacao para
@@ -115,6 +119,10 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
                                     trips de rede redundantes. Default False
                                     preserva o comportamento antigo para
                                     quem chamar esta funcao diretamente.
+               caminho_log_efi   - log dedicado do Mecanismo 3. None (default)
+                                    usa args.log_efi (modo sequencial); em
+                                    --parallel N>1, __main__.py passa um
+                                    caminho por host (ver write_cascade.py).
     RETURNS: dict, dados do host para compor a linha do resumo
     """
     caminho_log_remoto = args.log_file
@@ -341,6 +349,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
     resultado_escrita = tenta_escrever_tag_remoto(
         ip, ssh_user, sudo_cmd, tag_esperada, args,
         caminho_log_remoto, caminho_log_local,
+        caminho_log_efi=caminho_log_efi,
     )
     # resultado ja e descritivo (ex: "OK-amidelnx", "FALHOU-todos")
     registro["resultado"] = resultado_escrita

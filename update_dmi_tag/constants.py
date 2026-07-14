@@ -13,7 +13,15 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.1.14
+# VERSION: 2.2.0
+# REVISION: 2026-07-14 - v2.2.0 - eh_incompatibilidade_firmware() e
+#                        SINAIS_INCOMPATIBILIDADE_HW: deteccao de
+#                        assinaturas conhecidas de incompatibilidade de
+#                        firmware (rc=36 "Problem allocating BIOS
+#                        buffer", sysfs rejeitou a escrita, "Fail to
+#                        initialize SMBIOS"/"DMI Data write failed"),
+#                        confirmadas em campo (Dell Precision 5520 e
+#                        Latitude 5320, 2026-07-14, ver Docs_Test_boot/).
 # CREATED: 2026-06-12
 # REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
 #                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
@@ -126,7 +134,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.1.14"
+SCRIPT_VERSION = "2.2.0"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -192,6 +200,40 @@ DEFAULT_EFI_MIN_FREE_KB    = 10240
 # fisica). Nao confundir com os timeouts curtos de ssh_run/testa_porta_ssh.
 DEFAULT_EFI_REBOOT_TIMEOUT = 300
 DEFAULT_EFI_LOG_FILE       = "./update_dmi_tag_efi.log"
+
+# Assinaturas de mensagem de erro que indicam, com boa confianca,
+# incompatibilidade de FIRMWARE com a interface AMI SMI/DMI usada pelos
+# 3 mecanismos (nao um problema transitorio de rede/sudo/timeout).
+# Constatado em campo (Dell Precision 5520, BIOS 1.39.0, 2026-07-14):
+# Mecanismo 1 (rc=36, "Problem allocating BIOS buffer"), Mecanismo 2
+# ("sysfs rejeitou a escrita", write() aceito pelo kernel mas rejeitado
+# pela BIOS) e Mecanismo 3 ("Fail to initialize SMBIOS" / "DMI Data
+# write failed", saida nativa do AMIDEEFIx64.EFI rodando em pre-boot,
+# sem SO/kernel envolvido) falharam de forma consistente com esse
+# padrao. Ver eh_incompatibilidade_firmware, usado por write_cascade.py
+# (Mecanismos 1/2) e boot_efi.py (Mecanismo 3) para decidir entre o
+# status generico FALHOU/FALHOU-efiboot e o mais especifico
+# INCOMPATIVEL-HW/INCOMPATIVEL-efiboot.
+SINAIS_INCOMPATIBILIDADE_HW = (
+    "problem allocating bios buffer",
+    "sysfs rejeitou a escrita",
+    "fail to initialize smbios",
+    "dmi data write failed",
+)
+
+
+def eh_incompatibilidade_firmware(detalhe):
+    """
+    NAME: eh_incompatibilidade_firmware
+    DESCRIPTION: Verifica se uma mensagem de erro de mecanismo de escrita
+                 bate com alguma assinatura conhecida de incompatibilidade
+                 de firmware (ver SINAIS_INCOMPATIBILIDADE_HW). Comparacao
+                 case-insensitive, por substring.
+    PARAMETER: detalhe - str, mensagem de erro/detalhe de um mecanismo
+    RETURNS: bool, True se bate com alguma assinatura conhecida
+    """
+    texto = (detalhe or "").lower()
+    return any(sinal in texto for sinal in SINAIS_INCOMPATIBILIDADE_HW)
 
 
 # --- SSH ---
