@@ -40,7 +40,35 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.0
+# VERSION: 2.2.1
+# REVISION: 2026-07-16 - v2.2.1 - corrige bugs reais encontrados em
+#                        incidente de producao (usuario SSH comum, nao
+#                        root): (1) checagem de efibootmgr/mokutil
+#                        testava so o $PATH da sessao, que em usuario
+#                        comum normalmente nao inclui /usr/sbin;
+#                        _garante_binario_remoto agora testa caminhos
+#                        padrao tambem, com tentativa de instalacao via
+#                        zypper se ausente; (2) bug de precedencia
+#                        shell (&&/|| sem parenteses) fazia a busca de
+#                        binario vazar todos os caminhos testados em
+#                        vez de só o primeiro encontrado; (3) mokutil
+#                        --sb-state rodava sem sudo, sem retorno claro
+#                        em usuario comum (leitura de efivars exige
+#                        privilegio); (4) BUG SERIO: o diretorio da ESP
+#                        e criado com sudo (dono root, modo 755), mas
+#                        os arquivos eram copiados via scp comum (sem
+#                        sudo), sempre falhando com "Permissao negada"
+#                        para qualquer usuario nao-root; nova funcao
+#                        _copia_para_esp contorna isso (scp para o home
+#                        do usuario, depois sudo mv para o destino
+#                        final); (5) checagem "particao EFI gravavel"
+#                        tambem passou a testar via sudo, coerente com
+#                        o mecanismo real de copia. Adiciona marcadores
+#                        INICIO/FIM ao redor da saida capturada do
+#                        AMIDEEFIx64.EFI no log, a pedido do usuario.
+#                        Validado em campo com usuario sudo nao-root
+#                        real (VM de teste) e em 3 hosts PERTOSA/PERTO
+#                        SA de producao (BB).
 # REVISION: 2026-07-14 - v2.2.0 - corrige bug real encontrado em hardware
 #                        (nao aparecia em VM): o shell inicia sem nenhum
 #                        drive mapeado como atual ("Shell>", nao
@@ -136,6 +164,118 @@ def _fabrica_log(ip, ssh_user, sudo_cmd, caminho_log_remoto, caminho_log_local,
     return _log
 
 
+# Caminhos onde binarios administrativos costumam ficar, fora do $PATH
+# padrao de um usuario comum (normalmente so /usr/sbin e /sbin, que ficam
+# no $PATH do root mas nao do login SSH de um usuario sem privilegio).
+_CAMINHOS_SBIN_PADRAO = ("/usr/sbin", "/sbin", "/usr/bin", "/bin")
+
+
+def _garante_binario_remoto(ip, ssh_user, sudo_cmd, nome_binario, nome_pacote, _log):
+    """
+    NAME: _garante_binario_remoto
+    DESCRIPTION: Verifica se um binario administrativo (ex: efibootmgr,
+                 mokutil) esta disponivel no host, sem depender so do
+                 $PATH da sessao SSH -- constatado em campo (2026-07-15)
+                 que o $PATH padrao de um usuario comum (nao-root) costuma
+                 nao incluir /usr/sbin (onde esses binarios normalmente
+                 ficam), causando falso-negativo mesmo com o binario
+                 instalado e executavel. Testa via "command -v" e depois
+                 os caminhos padrao de _CAMINHOS_SBIN_PADRAO. Se ainda
+                 assim nao encontrar, tenta instalar via zypper (repos
+                 ja configurados no host, pacote de SO padrao, sem
+                 repositorio extra) e testa de novo.
+    PARAMETER: ip, ssh_user, sudo_cmd - identificacao/privilegio no host
+               nome_binario           - nome do executavel (ex: "efibootmgr")
+               nome_pacote            - nome do pacote zypper correspondente
+               _log                   - funcao de log ja fechada sobre o host
+    RETURNS: str, caminho completo do binario se encontrado (ou disponivel
+             apos instalacao), string vazia se nao foi possivel garantir
+    """
+    def _ssh(cmd, timeout=15):
+        rc, stdout, stderr = ssh_run(ip, ssh_user, cmd, timeout=timeout)
+        return rc, stdout.strip(), stderr.strip()
+
+    def _procura():
+        # Cada teste fica entre parenteses de proposito: sem eles, && e ||
+        # tem a mesma precedencia (avaliados em sequencia, esquerda para
+        # direita), entao assim que QUALQUER teste anterior desse "certo"
+        # (rc=0), todo "&& echo" seguinte roda em cascata, imprimindo
+        # todos os caminhos, nao so o primeiro encontrado (bug constatado
+        # em campo, 2026-07-16, vazando linhas soltas sem prefixo no log).
+        testes = ["(command -v {} 2>/dev/null)".format(nome_binario)]
+        for caminho in _CAMINHOS_SBIN_PADRAO:
+            testes.append(
+                "(test -x {0}/{1} && echo {0}/{1})".format(caminho, nome_binario))
+        cmd = " || ".join(testes)
+        rc, out, _ = _ssh(cmd)
+        # Defesa extra: mesmo com os parenteses, fica so com a primeira
+        # linha (ex: se o binario aparecer duplicado por symlink/usr-merge).
+        primeira_linha = out.splitlines()[0].strip() if out else ""
+        return primeira_linha if (rc == 0 and primeira_linha) else ""
+
+    encontrado = _procura()
+    if encontrado:
+        return encontrado
+
+    _log("WARNING",
+         "[MEC3] {} nao encontrado (nem via $PATH, nem nos caminhos "
+         "padrao de administracao); tentando instalar via zypper...".format(
+             nome_binario))
+    rc, _, stderr = _ssh(
+        "{} zypper --non-interactive install {}".format(sudo_cmd, nome_pacote),
+        timeout=120)
+    if rc != 0:
+        _log("WARNING",
+             "[MEC3] Instalacao de '{}' via zypper falhou (rc={}): {}".format(
+                 nome_pacote, rc, stderr[:200]))
+        return ""
+
+    encontrado = _procura()
+    if encontrado:
+        _log("INFO", "[MEC3] {} instalado com sucesso via zypper.".format(nome_pacote))
+    return encontrado
+
+
+def _copia_para_esp(ip, ssh_user, sudo_cmd, caminho_local, caminho_remoto_final):
+    """
+    NAME: _copia_para_esp
+    DESCRIPTION: Copia um arquivo local para dentro da ESP no host remoto,
+                 contornando a falta de permissao de escrita direta de um
+                 usuario comum no diretorio da ESP criado com sudo.
+                 Constatado em campo (2026-07-16, usuario nao-root): o
+                 "mkdir -p" com sudo cria o diretorio dono root, modo 755
+                 (sem escrita para outros), entao um scp direto como
+                 ssh_user (sem sudo -- scp nao tem como usar sudo na
+                 escrita remota) falhava com "Permissao negada". Copia
+                 primeiro para um arquivo temporario no home do proprio
+                 ssh_user (scp comum, sem sudo, sempre permitido), depois
+                 move para o destino final na ESP via sudo (mv, roda como
+                 root, sem problema de permissao).
+    PARAMETER: ip, ssh_user, sudo_cmd  - identificacao/privilegio no host
+               caminho_local           - arquivo local a copiar
+               caminho_remoto_final    - caminho completo de destino na ESP
+    RETURNS: tuple(bool, str), (sucesso, mensagem de erro se houver)
+    """
+    def _ssh(cmd, timeout=15):
+        rc, stdout, stderr = ssh_run(ip, ssh_user, cmd, timeout=timeout)
+        return rc, stdout.strip(), stderr.strip()
+
+    nome_temp = "~/.update_dmi_tag_tmp_{}".format(os.path.basename(caminho_remoto_final))
+    sucesso, erro = _scp_arquivo_com_erro(ip, ssh_user, caminho_local, nome_temp)
+    if not sucesso:
+        return False, "falha no scp para {}: {}".format(nome_temp, erro)
+
+    # "~" nao e citado de proposito: precisa ser expandido pelo shell do
+    # login SSH antes do sudo ver o argumento (dentro de aspas simples o
+    # shell nao expande "~").
+    rc, _, stderr = _ssh("{} mv {} {}".format(
+        sudo_cmd, nome_temp, shlex.quote(caminho_remoto_final)))
+    if rc != 0:
+        return False, "falha ao mover {} para {} via sudo: {}".format(
+            nome_temp, caminho_remoto_final, stderr.strip())
+    return True, ""
+
+
 def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
                                     caminho_log_local, caminho_log_efi,
                                     verbose, suprime_tela,
@@ -189,19 +329,39 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
     _log("INFO", "[MEC3] UEFI confirmado.")
 
     # 2. efibootmgr precisa existir no host para criar/gerenciar a entrada.
-    rc, out, _ = _ssh("command -v efibootmgr 2>/dev/null")
-    if rc != 0 or not out:
-        motivo = "Binario efibootmgr nao encontrado no host."
+    # Verifica alem do $PATH da sessao (ver _garante_binario_remoto) e
+    # tenta instalar via zypper se ausente, antes de bloquear de vez.
+    # Caminho resolvido e reaproveitado no passo 7 (checagem de colisao),
+    # que tambem chamava "efibootmgr" bare, com o mesmo problema de $PATH.
+    efibootmgr_path = _garante_binario_remoto(ip, ssh_user, sudo_cmd, "efibootmgr", "efibootmgr", _log)
+    if not efibootmgr_path:
+        motivo = "Binario efibootmgr nao encontrado no host (nem apos tentativa de instalacao via zypper)."
         _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
         raise SegurancaEfiBloqueadaError(motivo)
-    _log("INFO", "[MEC3] efibootmgr disponivel em: {}".format(out))
+    _log("INFO", "[MEC3] efibootmgr disponivel em: {}".format(efibootmgr_path))
 
     # 3. Secure Boot, maior risco conhecido. O AMIDEEFIx64.EFI/bootx64.efi
     # nao sao assinados por uma cadeia de confianca reconhecida pelo host;
     # com Secure Boot ativo, o firmware recusa executa-los. Nao ha
     # alternativa segura e remota para contornar isso (MOK exige
     # confirmacao fisica na tela, ver manual_operacao.md).
-    rc, out, _ = _ssh("mokutil --sb-state 2>/dev/null")
+    # mokutil tem o mesmo problema de deteccao do efibootmgr (ver
+    # _garante_binario_remoto acima): garante que esta disponivel (e tenta
+    # instalar via zypper se ausente) antes de invocar pelo caminho
+    # completo, ja que o $PATH da sessao SSH pode nao incluir /usr/sbin.
+    mokutil_path = _garante_binario_remoto(ip, ssh_user, sudo_cmd, "mokutil", "mokutil", _log)
+    if not mokutil_path:
+        motivo = ("Binario mokutil nao encontrado no host (nem apos tentativa de "
+                  "instalacao via zypper). Verificacao manual do Secure Boot "
+                  "necessaria antes de tentar o Mecanismo 3.")
+        _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
+        raise SegurancaEfiBloqueadaError(motivo)
+
+    # sudo necessario: ler o estado do Secure Boot exige acesso as efivars,
+    # normalmente restrito a root (constatado em campo, 2026-07-16, com
+    # usuario comum via SSH: sem sudo, mokutil nao da retorno claro e a
+    # checagem bloqueava por motivo errado, nao por Secure Boot de fato).
+    rc, out, _ = _ssh("{} {} --sb-state 2>/dev/null".format(sudo_cmd, mokutil_path))
     if rc == 0 and out:
         if "enabled" in out.lower():
             if force_secureboot:
@@ -222,11 +382,12 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
         # bios_amidelnx.py, free_out).
         _log("INFO", "[MEC3] Secure Boot: {}".format(out.replace("\n", " | ")))
     else:
-        # mokutil ausente ou sem retorno claro: nao assume seguranca por
-        # omissao. Aborta e exige verificacao manual.
-        motivo = ("Nao foi possivel confirmar o estado do Secure Boot (mokutil "
-                  "ausente ou sem retorno). Verificacao manual necessaria antes "
-                  "de tentar o Mecanismo 3 neste host.")
+        # mokutil esta presente (confirmado acima) mas nao deu retorno claro
+        # (ex: --sb-state nao suportado nesta versao/hardware). Nao assume
+        # seguranca por omissao. Aborta e exige verificacao manual.
+        motivo = ("mokutil esta instalado mas nao deu retorno claro para "
+                  "--sb-state. Verificacao manual do Secure Boot necessaria "
+                  "antes de tentar o Mecanismo 3 neste host.")
         _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
         raise SegurancaEfiBloqueadaError(motivo)
 
@@ -266,12 +427,19 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
         _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
         raise SegurancaEfiBloqueadaError(motivo)
 
-    rc, out, _ = _ssh("test -w {} && echo GRAVAVEL".format(shlex.quote(esp_mount_point)))
+    # Testa gravacao via sudo, nao como o usuario comum: a copia real dos
+    # arquivos (_copia_para_esp) usa sudo mv para o destino final, entao
+    # testar "test -w" sem sudo aqui checa a coisa errada -- constatado em
+    # campo (2026-07-16) que isso bloqueava mesmo quando a copia real
+    # funcionaria normal (ESP so e gravavel para root, o que e o esperado
+    # e ja contornado pela copia via sudo).
+    rc, out, _ = _ssh("{} test -w {} && echo GRAVAVEL".format(
+        sudo_cmd, shlex.quote(esp_mount_point)))
     if rc != 0 or "GRAVAVEL" not in out:
-        motivo = "Particao EFI ({}) nao esta gravavel.".format(esp_mount_point)
+        motivo = "Particao EFI ({}) nao esta gravavel (nem com sudo).".format(esp_mount_point)
         _log("ERROR", "[MEC3] BLOQUEADO -- {}".format(motivo))
         raise SegurancaEfiBloqueadaError(motivo)
-    _log("INFO", "[MEC3] Particao EFI ({}) montada e gravavel.".format(esp_mount_point))
+    _log("INFO", "[MEC3] Particao EFI ({}) montada e gravavel (via sudo).".format(esp_mount_point))
 
     # 6. Espaco livre suficiente na ESP.
     rc, out, _ = _ssh("df --output=avail -k {} 2>/dev/null | tail -1".format(
@@ -293,7 +461,12 @@ def verifica_seguranca_efi_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
 
     # 7. Sem colisao com entrada de boot ja existente com o mesmo label
     # (por exemplo, sobra de uma execucao anterior que nao limpou direito).
-    rc, out, _ = _ssh("efibootmgr 2>/dev/null | grep -F {}".format(shlex.quote(boot_label)))
+    # sudo + caminho completo (ver efibootmgr_path no passo 2): sem os
+    # dois, "efibootmgr" bare pode falhar tanto por $PATH quanto por
+    # permissao (leitura de NVRAM normalmente exige root), dando falso
+    # negativo (nao acusa colisao que na verdade existe).
+    rc, out, _ = _ssh("{} {} 2>/dev/null | grep -F {}".format(
+        sudo_cmd, efibootmgr_path, shlex.quote(boot_label)))
     if rc == 0 and out:
         motivo = ("Ja existe uma entrada de boot chamada '{}' na NVRAM deste host "
                   "(possivel sobra de execucao anterior). Verifique manualmente "
@@ -422,14 +595,14 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
         _log("ERROR", "[MEC3] {}".format(motivo))
         return "FALHOU-efiboot"
 
-    sucesso, erro = _scp_arquivo_com_erro(
-        ip, ssh_user, amide_local, "{}/AMIDEEFIx64.EFI".format(remoto_dir))
+    sucesso, erro = _copia_para_esp(
+        ip, ssh_user, sudo_cmd, amide_local, "{}/AMIDEEFIx64.EFI".format(remoto_dir))
     if not sucesso:
         _log("ERROR", "[MEC3] Falha ao copiar AMIDEEFIx64.EFI: {}".format(erro))
         return "FALHOU-efiboot"
 
-    sucesso, erro = _scp_arquivo_com_erro(
-        ip, ssh_user, shell_local, "{}/bootx64.efi".format(remoto_dir))
+    sucesso, erro = _copia_para_esp(
+        ip, ssh_user, sudo_cmd, shell_local, "{}/bootx64.efi".format(remoto_dir))
     if not sucesso:
         _log("ERROR", "[MEC3] Falha ao copiar bootx64.efi: {}".format(erro))
         return "FALHOU-efiboot"
@@ -463,8 +636,8 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     try:
         with open(caminho_nsh_tmp, "w", encoding="ascii") as f:
             f.write(conteudo_nsh)
-        sucesso, erro = _scp_arquivo_com_erro(
-            ip, ssh_user, caminho_nsh_tmp, "{}/startup.nsh".format(remoto_dir))
+        sucesso, erro = _copia_para_esp(
+            ip, ssh_user, sudo_cmd, caminho_nsh_tmp, "{}/startup.nsh".format(remoto_dir))
     finally:
         if os.path.isfile(caminho_nsh_tmp):
             os.remove(caminho_nsh_tmp)
@@ -607,10 +780,12 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
             saida_dbg_limpa = saida_dbg
         saida_dbg_limpa = saida_dbg_limpa.lstrip(chr(0xFEFF)).strip()
         _log("INFO", "[MEC3][DEBUG] Saida do AMIDEEFIx64.EFI capturada no boot:")
+        _log("INFO", "[MEC3][DEBUG]   +----------------------------------- INICIO ----------------------------------------+")
         for linha_dbg in saida_dbg_limpa.splitlines():
             linha_dbg = linha_dbg.strip()
             if linha_dbg:
                 _log("INFO", "[MEC3][DEBUG]   {}".format(linha_dbg))
+        _log("INFO", "[MEC3][DEBUG]   +------------------------------------- FIM ------------------------------------------+")
         _ssh("{} rm -f /boot/efi/amide_debug.log".format(sudo_cmd))
     else:
         _log("WARNING", "[MEC3][DEBUG] amide_debug.log nao encontrado ou vazio na ESP.")

@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.0
+Version:        2.2.1
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -80,6 +80,22 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.1-0
+- Corrige bugs reais encontrados em incidente de producao com usuario SSH
+  comum (nao root): checagem de efibootmgr/mokutil so testava o $PATH da
+  sessao (nao inclui /usr/sbin para usuario comum), com tentativa de
+  instalacao via zypper se ausente; bug de precedencia de shell (&&/||
+  sem parenteses) vazava todos os caminhos testados no log; mokutil
+  --sb-state rodava sem sudo, sem retorno claro.
+- Corrige bug serio: o diretorio da ESP e criado com sudo (dono root,
+  modo 755), mas os arquivos eram copiados via scp comum, falhando
+  sempre com "Permissao negada" para qualquer usuario nao-root. Nova
+  funcao _copia_para_esp contorna isso (scp para o home do usuario,
+  depois sudo mv para o destino final).
+- Adiciona marcadores INICIO/FIM ao redor da saida capturada do
+  AMIDEEFIx64.EFI no log.
+- Validado em campo com usuario sudo nao-root real e em hosts PERTOSA/
+  PERTO SA de producao.
 * Tue Jul 14 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.0-0
 - Execucao paralela (--parallel N, EXPERIMENTAL): pool de threads, log
   isolado por host em logs/<timestamp>/hosts/, ticker de progresso no

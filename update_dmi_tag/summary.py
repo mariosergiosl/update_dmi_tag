@@ -13,7 +13,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.0
+# VERSION: 2.2.1
+# REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-14 - v2.2.0 - adiciona descricoes e contadores para
 #                        os novos status INCOMPATIVEL-HW e INCOMPATIVEL-
 #                        efiboot (ver write_cascade.py/boot_efi.py).

@@ -15,7 +15,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.0
+# VERSION: 2.2.1
+# REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-14 - v2.2.0 - processa_host_remoto aceita o novo
 #                        parametro opcional caminho_log_efi (None usa
 #                        args.log_efi, modo sequencial; --parallel N>1

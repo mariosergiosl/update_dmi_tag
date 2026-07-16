@@ -17,7 +17,10 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.0
+# VERSION: 2.2.1
+# REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-14 - v2.2.0 - executa_amibios_local/remoto passam a
 #                        retornar tupla (sucesso, detalhe) em vez de bool
 #                        (ver bios_amidelnx.py). Corrige tambem um crash
