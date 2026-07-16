@@ -13,7 +13,10 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.1
+# VERSION: 2.2.2
+# REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -137,7 +140,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.2.1"
+SCRIPT_VERSION = "2.2.2"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"

@@ -16,7 +16,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.1
+# VERSION: 2.2.2
+# REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.

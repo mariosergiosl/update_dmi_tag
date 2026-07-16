@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.1
+Version:        2.2.2
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -80,6 +80,15 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.2-0
+- Adiciona checkpoints de progresso permanentes no startup.nsh do
+  Mecanismo 3 (MEC3-DEBUG: apos cada comando, gravados incrementalmente
+  em FS0:\amide_debug.log), motivado por host PERTOSA GA-H81M-S2PH
+  (producao) que travou apos o reboot sem retornar via SSH
+  (TRAVADO-POS-REBOOT) e sem log algum para diagnostico, ja que o
+  arquivo so era criado ao final da execucao do AMIDEEFIx64.EFI.
+- Nao interfere na deteccao de incompatibilidade de firmware nem no
+  encoding UTF-16LE ja usado pelo UEFI Shell.
 * Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.1-0
 - Corrige bugs reais encontrados em incidente de producao com usuario SSH
   comum (nao root): checagem de efibootmgr/mokutil so testava o $PATH da
@@ -87,7 +96,7 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
   instalacao via zypper se ausente; bug de precedencia de shell (&&/||
   sem parenteses) vazava todos os caminhos testados no log; mokutil
   --sb-state rodava sem sudo, sem retorno claro.
-- Corrige bug serio: o diretorio da ESP e criado com sudo (dono root,
+- Corrige bug: o diretorio da ESP e criado com sudo (dono root,
   modo 755), mas os arquivos eram copiados via scp comum, falhando
   sempre com "Permissao negada" para qualquer usuario nao-root. Nova
   funcao _copia_para_esp contorna isso (scp para o home do usuario,

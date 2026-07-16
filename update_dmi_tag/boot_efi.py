@@ -40,7 +40,25 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.1
+# VERSION: 2.2.2
+# REVISION: 2026-07-16 - v2.2.2 - host PERTOSA GA-H81M-S2PH (producao, BB)
+#                        travou apos o reboot do Mecanismo 3, sem retornar
+#                        via SSH (TRAVADO-POS-REBOOT), e o amide_debug.log
+#                        nunca chegou a existir, entao nao deu para saber
+#                        em que linha do startup.nsh o travamento ocorreu.
+#                        Adiciona checkpoints de progresso permanentes no
+#                        startup.nsh (MEC3-DEBUG: apos cada comando,
+#                        gravados incrementalmente com ">>" em
+#                        FS0:\amide_debug.log), para que, mesmo travando no
+#                        meio, o log parcial ja gravado sobreviva a um
+#                        reset fisico. Nao interfere na deteccao de
+#                        incompatibilidade de firmware (comparacao por
+#                        substring em eh_incompatibilidade_firmware, ver
+#                        constants.py) nem no encoding (mesmo mecanismo de
+#                        redirecionamento UTF-16LE do UEFI Shell usado pelo
+#                        AMIDEEFIx64.EFI). Mantido permanentemente (nao e
+#                        mais um bloco de debug temporario), decisao para
+#                        ajudar na operacao em volume no parque completo.
 # REVISION: 2026-07-16 - v2.2.1 - corrige bugs reais encontrados em
 #                        incidente de producao (usuario SSH comum, nao
 #                        root): (1) checagem de efibootmgr/mokutil
@@ -54,7 +72,7 @@
 #                        vez de só o primeiro encontrado; (3) mokutil
 #                        --sb-state rodava sem sudo, sem retorno claro
 #                        em usuario comum (leitura de efivars exige
-#                        privilegio); (4) BUG SERIO: o diretorio da ESP
+#                        privilegio); (4) o diretorio da ESP
 #                        e criado com sudo (dono root, modo 755), mas
 #                        os arquivos eram copiados via scp comum (sem
 #                        sudo), sempre falhando com "Permissao negada"
@@ -618,18 +636,31 @@ def executa_boot_efi_remoto(ip, ssh_user, sudo_cmd, tag, args,
     # "cd \caminho" relativo falhava com "Current directory not
     # specified" e o AMIDEEFIx64.EFI nunca era encontrado (%lasterror%
     # = 0xE, Not Found). Corrigido definitivamente aqui.
-    # BLOCO DE DEBUG TEMPORARIO (Precision 5520, 2026-07-14): a saida do
+    # BLOCO DE DEBUG PERMANENTE (Precision 5520, 2026-07-14): a saida do
     # AMIDEEFIx64.EFI e redirecionada para FS0:\amide_debug.log (fora de
     # remoto_dir, de proposito -- _limpa_entrada_e_arquivos faz rm -rf no
     # remoto_dir logo apos o reboot, e apagaria o log antes de conseguirmos
-    # ler). Lido via SSH e anexado ao log local mais abaixo. Reverter (esta
-    # linha + o bloco de leitura correspondente) apos o debug em campo.
+    # ler). Lido via SSH e anexado ao log local mais abaixo. Mantido de
+    # forma definitiva (nao e mais para reverter), decisao tomada apos o
+    # incidente de travamento abaixo, para ajudar na operacao em volume.
+    # Checkpoints de progresso (campo, 2026-07-16): host PERTOSA GA-H81M-S2PH
+    # travou apos o reboot sem retornar via SSH (incidente TM7984020398,
+    # 10.24.80.96) e o amide_debug.log nunca chegou a existir, entao nao
+    # deu para saber em qual linha do startup.nsh o travamento ocorreu.
+    # Cada linha grava seu proprio checkpoint em FS0:\amide_debug.log antes
+    # do proximo comando rodar (">" so na primeira, ">>" nas seguintes), para
+    # que, mesmo travando no meio, o log parcial ja gravado sobreviva a um
+    # reset fisico e possa ser lido depois via SSH.
     conteudo_nsh = (
         "echo -off\n"
+        "echo MEC3-DEBUG: startup.nsh iniciado > FS0:\\amide_debug.log\n"
         "FS0:\n"
+        "echo MEC3-DEBUG: apos FS0: >> FS0:\\amide_debug.log\n"
         "cd \\EFI\\{0}\n"
-        "AMIDEEFIx64.EFI /CA \"{1}\" > FS0:\\amide_debug.log\n"
-        "echo Codigo de retorno (lasterror): %lasterror% >> FS0:\\amide_debug.log\n"
+        "echo MEC3-DEBUG: apos cd EFI\\{0} >> FS0:\\amide_debug.log\n"
+        "echo MEC3-DEBUG: antes de executar AMIDEEFIx64.EFI >> FS0:\\amide_debug.log\n"
+        "AMIDEEFIx64.EFI /CA \"{1}\" >> FS0:\\amide_debug.log\n"
+        "echo MEC3-DEBUG: apos AMIDEEFIx64.EFI, lasterror=%lasterror% >> FS0:\\amide_debug.log\n"
         "reset\n"
     ).format(subdir, tag)
     caminho_nsh_tmp = "{}.nsh_tmp_{}".format(caminho_log_local or "efi_boot", ip)
