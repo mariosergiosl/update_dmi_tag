@@ -30,7 +30,11 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.2.2
+# VERSION: 2.2.3
+# REVISION: 2026-07-16 - v2.2.3 - adiciona --module-rpm-dir (padrao:
+#                        DEFAULT_MODULE_RPM_DIR, pasta rpm/ do projeto)
+#                        para a instalacao remota automatica do KMP
+#                        amibios_dmi (ver environment.py/bios_sysfs.py).
 # REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -134,6 +138,7 @@ from .constants import (
     DEFAULT_LOG_FILE, DEFAULT_LOCAL_LOG_FILE,
     DEFAULT_AMIDE_REMOTE_PATH, DEFAULT_AMIDE_PACKAGE, DEFAULT_AMIDE_REPO_URL,
     DEFAULT_SYSFS_TARGET, DEFAULT_MODULE_REPO_URL, DEFAULT_MODULE_PACKAGE,
+    DEFAULT_MODULE_RPM_DIR,
     DEFAULT_SSH_USER,
     DEFAULT_EFI_LOCAL_DIR, DEFAULT_EFI_REBOOT_TIMEOUT, DEFAULT_EFI_LOG_FILE,
     PatrimonioPendenteError, TodosMecanismosFalharam,
@@ -412,6 +417,15 @@ def main():
         default=DEFAULT_MODULE_PACKAGE,
         help="Nome do pacote KMP a instalar (padrao: {})".format(
             DEFAULT_MODULE_PACKAGE),
+    )
+    parser.add_argument(
+        "--module-rpm-dir",
+        default=DEFAULT_MODULE_RPM_DIR,
+        help=(
+            "Diretorio local com os RPMs do KMP amibios_dmi (fork "
+            "mariosergiosl/amibios_dmi), copiados via scp e instalados "
+            "via zypper local quando ausente no alvo (padrao: {})".format(
+                DEFAULT_MODULE_RPM_DIR)),
     )
 
     # --- Mecanismo 3: boot EFI temporario (experimental) ---

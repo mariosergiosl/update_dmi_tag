@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.2
+Version:        2.2.3
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -53,6 +53,11 @@ cp -a update_dmi_tag %{buildroot}/opt/%{name}/
 cp -a tools %{buildroot}/opt/%{name}/
 cp -a efi_boot %{buildroot}/opt/%{name}/
 
+# RPMs do KMP amibios_dmi (fork open-source mariosergiosl/amibios_dmi,
+# GPLv2, NAO e NDA -- ver rpm/README.md), usados pela instalacao remota
+# automatica do Mecanismo 2 (environment.py: instala_modulo_remoto).
+cp -a rpm %{buildroot}/opt/%{name}/
+
 # Documentacao, licenca e exemplos que o operador consulta junto do codigo
 cp -a manual_operacao.md README.md LICENSE.md ErrCode.txt \
     survey_asset_tag.bash bb_repo.conf.example %{buildroot}/opt/%{name}/
@@ -80,6 +85,29 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.3-0
+- Implementa de vez a instalacao remota automatica do KMP amibios_dmi
+  (fork open-source mariosergiosl/amibios_dmi, GPLv2, nao e NDA):
+  copia os .rpm de rpm/ via scp, confere SHA-256 da copia antes de
+  instalar com sudo, instala via zypper install local (sem depender de
+  nenhum host alcancar repositorio externo), e reconfirma via rpm -q.
+  Nova flag --module-rpm-dir.
+- Corrige BUG REAL pre-existente: a checagem de "interface SMI pronta"
+  usava o rc de um comando composto (test -d X && echo ready || echo
+  absent), sempre 0 -- fazia a instalacao automatica do modulo nunca
+  ser exercitada, em nenhum host, em nenhuma execucao anterior.
+- Corrige bug de duplicidade (padrao de busca do RPM userspace tambem
+  casava com o nome do KMP) e bug de shlex.quote no "~/arquivo" que
+  impedia a expansao do "~" pelo shell remoto (sha256sum/zypper
+  procuravam um arquivo inexistente).
+- Corrige mensagem de erro do modprobe descartada silenciosamente
+  (2>&1 mesclava no stdout, so o stderr vazio era lido).
+- Adiciona rpm/README.md e inclui a pasta rpm/ no pacote RPM.
+- Validado em campo: instalacao/carregamento/gravacao com persistencia
+  confirmada apos reboot no host de producao (10.24.80.96, PERTOSA
+  GA-H81M-S2PH); fluxo completo (deteccao, copia, checksum, tentativa
+  de instalacao, diagnostico de falha, Mecanismo 3 com reboot real)
+  validado ponta a ponta em VM de teste.
 * Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.2-0
 - Adiciona checkpoints de progresso permanentes no startup.nsh do
   Mecanismo 3 (MEC3-DEBUG: apos cada comando, gravados incrementalmente

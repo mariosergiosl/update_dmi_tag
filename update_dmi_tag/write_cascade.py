@@ -17,7 +17,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.2
+# VERSION: 2.2.3
+# REVISION: 2026-07-16 - v2.2.3 - repassa args.module_rpm_dir nas duas
+#                        chamadas de executa_amibios_remoto (gravacao real
+#                        e --test-write), habilitando a instalacao remota
+#                        automatica do KMP amibios_dmi.
 # REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -209,6 +213,7 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
             args.verbose, args.csv, dry_run=dry_run,
             module_repo_url=args.module_repo_url,
             module_package=args.module_package,
+            module_rpm_dir=args.module_rpm_dir,
         )
         if dry_run: return "DRY-RUN"
         if sucesso: return "OK-amibios"
@@ -328,6 +333,7 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                 args.verbose, args.csv, dry_run=False,
                 module_repo_url=args.module_repo_url,
                 module_package=args.module_package,
+                module_rpm_dir=args.module_rpm_dir,
             )
             if sucesso:
                 _log("INFO",

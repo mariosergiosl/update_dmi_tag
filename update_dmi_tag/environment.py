@@ -17,7 +17,32 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.2
+# VERSION: 2.2.3
+# REVISION: 2026-07-16 - v2.2.3 - implementa de vez a instalacao remota
+#                        do KMP amibios_dmi (ate entao so preparada, nunca
+#                        conectada ao caminho remoto real, ver bios_sysfs.py
+#                        v2.2.3). Novas funcoes: verifica_pacote_rpm_remoto
+#                        (rpm -q remoto, loga o NVR completo para permitir
+#                        conferir se e o build esperado), instala_modulo_
+#                        remoto (localiza os .rpm em module_rpm_dir por
+#                        padrao de nome, copia via scp, confere SHA-256 da
+#                        copia contra o arquivo local antes de instalar com
+#                        sudo -- aborta se nao bater -- e instala via
+#                        'zypper install <caminho-local>', reconferindo no
+#                        final via rpm -q em vez de confiar so no rc do
+#                        zypper) e _sha256_arquivo_local. Bugs reais
+#                        corrigidos durante validacao em campo (VM
+#                        192.168.56.167, 2026-07-16): padrao de busca do
+#                        RPM userspace tambem casava com o nome do KMP
+#                        (ambos comecam com "amibios-dmi-"), copiando/
+#                        instalando o KMP em duplicidade -- corrigido para
+#                        exigir digito logo apos o nome do pacote
+#                        userspace; e shlex.quote aplicado no "~/arquivo"
+#                        inteiro impedia a expansao do "~" pelo shell
+#                        remoto (sha256sum/zypper procuravam um arquivo
+#                        chamado literalmente "~/nome", sempre "ausente")
+#                        -- corrigido para aspear so o nome do arquivo,
+#                        deixando o "~/" fora das aspas.
 # REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -70,12 +95,15 @@
 #
 # =======================================================================
 
+import glob
+import hashlib
 import os
+import shlex
 import subprocess
 
 from .constants import SYSMODULE_PATH, SYSFS_IFACE_PATH
 from .logging_utils import gravar_log, gravar_log_remoto
-from .ssh_utils import ssh_run, _filtra_banner
+from .ssh_utils import ssh_run, _filtra_banner, _scp_arquivo_com_erro
 
 
 def _le_sysfs(caminho):
@@ -556,6 +584,187 @@ def instala_modulo_via_zypper(repo_url, pacote, caminho_log, verbose,
     _log("ERROR", "Falha ao instalar '{}' (zypper rc={}): {}".format(
         pacote, resultado.returncode, resultado.stderr.strip()))
     return False
+
+
+def verifica_pacote_rpm_remoto(ip, ssh_user, sudo_cmd, nome_pacote,
+                                caminho_log, verbose, suprime_tela,
+                                caminho_log_local=""):
+    """
+    NAME: verifica_pacote_rpm_remoto
+    DESCRIPTION: Verifica, via SSH, se um pacote RPM esta instalado no
+                 host remoto (rpm -q). Loga o NVR (nome-versao-release)
+                 completo quando instalado, para permitir conferencia
+                 manual de que o pacote e de fato o build esperado (o
+                 nome do pacote sozinho nao garante que veio da mesma
+                 origem/fork; ver rpm/README.md).
+    PARAMETER: ip                - endereco IP do host remoto
+               ssh_user          - usuario SSH
+               sudo_cmd          - prefixo sudo (nao usado, rpm -q nao
+                                   exige privilegio; mantido por simetria
+                                   com as demais funcoes remotas)
+               nome_pacote       - nome do pacote RPM a verificar
+               caminho_log       - log remoto
+               verbose           - modo verbose
+               suprime_tela      - suprime stdout
+               caminho_log_local - log consolidado (opcional)
+    RETURNS: bool, True se instalado
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
+                          caminho_log_local, verbose, suprime_tela)
+
+    rc, stdout, _ = ssh_run(
+        ip, ssh_user,
+        "rpm -q --qf '%{{NAME}}-%{{VERSION}}-%{{RELEASE}}' {} 2>/dev/null".format(
+            nome_pacote),
+        timeout=10)
+    nvr = _filtra_banner(stdout).strip()
+    if rc == 0 and nvr:
+        _log("DEBUG", "Pacote RPM instalado no alvo: {}".format(nvr))
+        return True
+    _log("DEBUG", "Pacote RPM ausente no alvo: {}".format(nome_pacote))
+    return False
+
+
+def _sha256_arquivo_local(caminho):
+    """
+    NAME: _sha256_arquivo_local
+    DESCRIPTION: Calcula o SHA-256 de um arquivo local, em blocos (nao
+                 carrega o arquivo inteiro na memoria).
+    PARAMETER: caminho - caminho do arquivo local
+    RETURNS: str, hash SHA-256 em hexadecimal
+    """
+    h = hashlib.sha256()
+    with open(caminho, "rb") as f:
+        for bloco in iter(lambda: f.read(65536), b""):
+            h.update(bloco)
+    return h.hexdigest()
+
+
+def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
+                           userspace_package, caminho_log, verbose,
+                           suprime_tela, caminho_log_local=""):
+    """
+    NAME: instala_modulo_remoto
+    DESCRIPTION: Copia via scp e instala via zypper local os RPMs do KMP
+                 amibios_dmi (fork mariosergiosl/amibios_dmi, GPLv2, nao
+                 e NDA) num host remoto, quando o pacote ainda nao
+                 estiver instalado. Localiza os arquivos em rpm_dir por
+                 padrao de nome (a versao/git-date/kernel-alvo mudam a
+                 cada build, ver rpm/README.md), copia para o home do
+                 usuario SSH (scp nao precisa de sudo) e instala com
+                 'zypper install <caminho-local>' (sudo), que resolve
+                 dependencias pelo mirror ja configurado no host. Confere
+                 a instalacao no final via verifica_pacote_rpm_remoto
+                 (nao confia apenas no codigo de retorno do zypper).
+    PARAMETER: ip                - endereco IP do host remoto
+               ssh_user          - usuario SSH
+               sudo_cmd          - prefixo sudo no host remoto
+               rpm_dir           - diretorio local com os .rpm (ver
+                                   DEFAULT_MODULE_RPM_DIR)
+               module_package    - nome do pacote KMP (ex.:
+                                   amibios-dmi-kmp-default)
+               userspace_package - nome do pacote userspace complementar
+                                   (ex.: amibios-dmi)
+               caminho_log       - log remoto
+               verbose           - modo verbose
+               suprime_tela      - suprime stdout
+               caminho_log_local - log consolidado (opcional)
+    RETURNS: bool, True somente se o pacote KMP foi confirmado instalado
+             ao final (via rpm -q no alvo)
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
+                          caminho_log_local, verbose, suprime_tela)
+
+    # Padrao do userspace usa "-[0-9]*.rpm" (nao "-*.rpm") para nao
+    # tambem casar com o nome do KMP -- ambos comecam com "amibios-dmi-",
+    # e "amibios-dmi-kmp-default-1.0.0...rpm" bateria com um padrao
+    # generico "amibios-dmi-*.rpm", copiando/instalando o KMP em
+    # duplicidade (constatado em teste real, VM 192.168.56.167).
+    padrao_kmp = os.path.join(rpm_dir, "{}-*.rpm".format(module_package))
+    padrao_userspace = os.path.join(rpm_dir, "{}-[0-9]*.rpm".format(userspace_package))
+    candidatos_kmp = sorted(glob.glob(padrao_kmp))
+    candidatos_userspace = sorted(glob.glob(padrao_userspace))
+
+    if not candidatos_kmp:
+        _log("ERROR",
+             "Nenhum RPM do modulo encontrado em '{}' (padrao: {}-*.rpm).".format(
+                 rpm_dir, module_package))
+        return False
+
+    caminho_kmp_local = candidatos_kmp[-1]
+    arquivos_para_copiar = [caminho_kmp_local]
+    if candidatos_userspace:
+        arquivos_para_copiar.append(candidatos_userspace[-1])
+    else:
+        _log("DEBUG",
+             "RPM userspace ({}-*.rpm) nao encontrado em '{}'; "
+             "seguindo so com o KMP.".format(userspace_package, rpm_dir))
+
+    caminhos_remotos = []
+    nomes_arquivos = []
+    for caminho_local in arquivos_para_copiar:
+        nome_arquivo = os.path.basename(caminho_local)
+        # "~/" fica FORA do shlex.quote de proposito: aspeado junto, o
+        # shell remoto para de expandir o "~" e trata como nome literal
+        # de arquivo (bug constatado em teste real, VM 192.168.56.167 --
+        # sha256sum sempre retornava vazio). So o nome do arquivo (vindo
+        # do nosso proprio glob local, mas aspeado por precaucao) e
+        # aspeado; o "~/" continua expandindo normalmente no shell.
+        caminho_remoto = "~/{}".format(nome_arquivo)
+        caminho_remoto_shell = "~/{}".format(shlex.quote(nome_arquivo))
+        _log("INFO", "Copiando {} para {}@{}:{}".format(
+            nome_arquivo, ssh_user, ip, caminho_remoto))
+        sucesso, erro = _scp_arquivo_com_erro(
+            ip, ssh_user, caminho_local, caminho_remoto)
+        if not sucesso:
+            _log("ERROR", "Falha ao copiar {}: {}".format(nome_arquivo, erro))
+            return False
+
+        # Confere o SHA-256 remoto contra o arquivo local antes de instalar
+        # como root -- garante que o zypper vai instalar exatamente os
+        # bytes que saem daqui, nao uma copia corrompida na transferencia.
+        sha_local = _sha256_arquivo_local(caminho_local)
+        rc_sha, stdout_sha, _ = ssh_run(
+            ip, ssh_user,
+            "sha256sum {} 2>/dev/null | cut -d' ' -f1".format(
+                caminho_remoto_shell),
+            timeout=15)
+        sha_remoto = stdout_sha.strip()
+        if rc_sha != 0 or not sha_remoto or sha_remoto != sha_local:
+            _log("ERROR",
+                 "SHA-256 do arquivo copiado nao confere ({}): "
+                 "local={} remoto={}. Abortando instalacao.".format(
+                     nome_arquivo, sha_local, sha_remoto or "N/D"))
+            return False
+
+        # Guarda a forma ja "tilde-safe" (so o nome do arquivo aspeado,
+        # "~/" fora das aspas) para reuso no comando de instalacao abaixo.
+        caminhos_remotos.append(caminho_remoto_shell)
+        nomes_arquivos.append(nome_arquivo)
+
+    cmd_install = "{} zypper --non-interactive --no-gpg-checks install {}".format(
+        sudo_cmd, " ".join(caminhos_remotos))
+    _log("INFO", "Instalando via zypper local: {}".format(
+        " ".join(nomes_arquivos)))
+    rc, stdout, stderr = ssh_run(ip, ssh_user, cmd_install, timeout=120)
+    if rc != 0:
+        _log("ERROR", "zypper install falhou (rc={}): {}".format(
+            rc, _filtra_banner(stderr).strip() or _filtra_banner(stdout).strip()))
+        return False
+
+    instalado = verifica_pacote_rpm_remoto(
+        ip, ssh_user, sudo_cmd, module_package,
+        caminho_log, verbose, suprime_tela, caminho_log_local)
+    if instalado:
+        _log("INFO", "Pacote '{}' confirmado instalado no alvo.".format(
+            module_package))
+    else:
+        _log("ERROR",
+             "zypper install rodou sem erro, mas '{}' nao aparece instalado "
+             "no alvo (rpm -q).".format(module_package))
+    return instalado
 
 
 def modulo_esta_carregado():

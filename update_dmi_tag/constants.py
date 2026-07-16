@@ -13,7 +13,13 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.2
+# VERSION: 2.2.3
+# REVISION: 2026-07-16 - v2.2.3 - adiciona DEFAULT_MODULE_USERSPACE_PACKAGE
+#                        e DEFAULT_MODULE_RPM_DIR (pasta rpm/ do projeto)
+#                        para a instalacao remota automatica do KMP
+#                        amibios_dmi via scp + zypper local, sem depender
+#                        de nenhum host alcancar um repositorio externo
+#                        (ver environment.py, bios_sysfs.py, rpm/README.md).
 # REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -140,7 +146,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.2.2"
+SCRIPT_VERSION = "2.2.3"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -178,6 +184,16 @@ DEFAULT_SYSFS_TARGET   = "/sys/firmware/amibios/chassis/asset_tag"
 # onde ele ainda nao estiver carregado.
 DEFAULT_MODULE_REPO_URL = _le_config_repo("MODULE_REPO_URL", "BB_MODULE_REPO_URL")
 DEFAULT_MODULE_PACKAGE  = "amibios-dmi-kmp-default"
+# Pacote userspace complementar (nao usado pela leitura/escrita via sysfs,
+# instalado apenas por completude/paridade com o fork upstream).
+DEFAULT_MODULE_USERSPACE_PACKAGE = "amibios-dmi"
+# Diretorio local com os RPMs do fork mariosergiosl/amibios_dmi (GPLv2,
+# nao e NDA como amidelnx_64/AMIDEEFIx64.EFI), versionados no proprio
+# projeto (ver rpm/README.md). Copiados via scp e instalados via zypper
+# local quando o modulo nao estiver presente no host remoto -- evita
+# depender de cada host alcancar o OBS externo (ver DEFAULT_MODULE_REPO_URL,
+# alternativa mais antiga, mantida por compatibilidade).
+DEFAULT_MODULE_RPM_DIR  = os.path.join(os.getcwd(), "rpm")
 
 # Caminhos sysfs para distinguir "modulo carregado" de "interface SMI pronta".
 # /sys/module/amibios_dmi existe se o modulo foi inserido no kernel.

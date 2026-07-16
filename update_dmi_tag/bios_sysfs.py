@@ -17,7 +17,27 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.2
+# VERSION: 2.2.3
+# REVISION: 2026-07-16 - v2.2.3 - executa_amibios_remoto passa a instalar
+#                        o KMP amibios_dmi automaticamente (via
+#                        instala_modulo_remoto, environment.py) quando
+#                        ausente no alvo, antes de tentar o modprobe; loga
+#                        as ultimas linhas do dmesg quando a interface SMI
+#                        nao aparece apos o modprobe, para diagnostico.
+#                        Corrige BUG REAL pre-existente: a checagem de
+#                        "interface pronta" usava o rc de um comando
+#                        composto "test -d X && echo ready || echo
+#                        absent", que e sempre 0 (o "echo absent" do ramo
+#                        else tambem retorna 0) -- fazia iface_pronta
+#                        ficar sempre True, pulando por completo a
+#                        instalacao automatica do modulo em TODAS as
+#                        execucoes anteriores, em qualquer host (bug
+#                        constatado em teste real, VM 192.168.56.167,
+#                        2026-07-16, com o modulo deliberadamente
+#                        ausente). Corrige tambem a mensagem de erro do
+#                        modprobe, que era descartada silenciosamente
+#                        (comando usa "2>&1", mas so o stderr vazio era
+#                        capturado; agora le do stdout mesclado).
 # REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -59,12 +79,15 @@
 import os
 import subprocess
 
-from .constants import MecanismoIndisponivelError, SYSMODULE_PATH, SYSFS_IFACE_PATH
+from .constants import (
+    MecanismoIndisponivelError, SYSMODULE_PATH, SYSFS_IFACE_PATH,
+    DEFAULT_MODULE_USERSPACE_PACKAGE,
+)
 from .logging_utils import gravar_log, gravar_log_remoto
 from .ssh_utils import ssh_run
 from .environment import (
     modulo_esta_carregado, interface_esta_pronta, instala_modulo_via_zypper,
-    loga_versao_modulo,
+    loga_versao_modulo, verifica_pacote_rpm_remoto, instala_modulo_remoto,
 )
 
 
@@ -282,14 +305,20 @@ def executa_amibios_local(tag, sysfs_target, kmp_instalado,
 def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                             caminho_log, caminho_log_local,
                             verbose, suprime_tela, dry_run=True,
-                            module_repo_url="", module_package=""):
+                            module_repo_url="", module_package="",
+                            module_rpm_dir=""):
     """
     NAME: executa_amibios_remoto
     DESCRIPTION: Executa o mecanismo amibios_dmi em um host remoto via SSH.
-                 Verifica se a interface sysfs esta disponivel, tenta modprobe
-                 remoto se necessario, le o valor antigo, grava e audita
-                 pos-escrita. Em dry_run, apenas loga. Levanta
-                 MecanismoIndisponivelError se a interface nao ficar disponivel.
+                 Verifica se a interface sysfs esta disponivel; se o
+                 modulo nao estiver presente, confere se o RPM ja esta
+                 instalado (rpm -q) e, senao, copia os RPMs de
+                 module_rpm_dir via scp e instala via zypper local
+                 (instala_modulo_remoto). So entao tenta o modprobe. Le
+                 o valor antigo, grava e audita pos-escrita. Em dry_run,
+                 apenas loga. Levanta MecanismoIndisponivelError se a
+                 interface nao ficar disponivel, com diagnostico (dmesg)
+                 anexado ao erro para investigacao.
     PARAMETER: ip                - endereco IP do host remoto
                ssh_user          - usuario SSH
                sudo_cmd          - prefixo sudo no host remoto
@@ -300,8 +329,12 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                dry_run           - se True, nao executa a gravacao
-               module_repo_url   - repo zypper (para instalacao futura)
-               module_package    - pacote KMP (para instalacao futura)
+               module_repo_url   - repo zypper (via --plus-repo, alternativa
+                                   mais antiga a module_rpm_dir)
+               module_package    - nome do pacote KMP
+               module_rpm_dir    - diretorio local com os RPMs do KMP
+                                   (scp + zypper install local; ver
+                                   DEFAULT_MODULE_RPM_DIR)
     RETURNS: tuple(bool, str), (sucesso, detalhe) -- ver
              executa_amibios_local.
     """
@@ -316,10 +349,18 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
     modulo_carregado_pelo_script = False
 
     try:
-        # Verifica se a interface sysfs esta disponivel no alvo
-        rc_iface, _, _ = _ssh(
+        # Verifica se a interface sysfs esta disponivel no alvo. O rc do
+        # comando composto abaixo e sempre 0 (o "echo absent" do ramo else
+        # tambem retorna 0), entao a checagem tem que ser pelo conteudo do
+        # stdout, nao pelo rc -- mesma classe de bug de precedencia de
+        # shell (&&/|| sem parenteses) ja corrigida em boot_efi.py; aqui
+        # o bug fazia iface_pronta ficar sempre True, pulando por completo
+        # a instalacao automatica do modulo (constatado em teste real na
+        # VM 192.168.56.167, 2026-07-16, com o modulo deliberadamente
+        # ausente).
+        _, stdout_iface, _ = _ssh(
             "test -d {} && echo ready || echo absent".format(SYSFS_IFACE_PATH))
-        iface_pronta = (rc_iface == 0)
+        iface_pronta = (stdout_iface.strip() == "ready")
 
         if not iface_pronta:
             # Verifica se o modulo esta carregado
@@ -328,10 +369,35 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
             modulo_presente = (stdout_mod.strip() == "loaded")
 
             if not modulo_presente:
-                _log("WARNING",
-                     "Modulo amibios_dmi ausente no alvo. Tentando modprobe remoto...")
-                rc_mp, _, stderr_mp = _ssh(
+                _log("WARNING", "Modulo amibios_dmi ausente no alvo.")
+
+                pacote_ja_instalado = verifica_pacote_rpm_remoto(
+                    ip, ssh_user, sudo_cmd, module_package,
+                    caminho_log, verbose, suprime_tela, caminho_log_local)
+
+                if not pacote_ja_instalado:
+                    if module_rpm_dir:
+                        _log("INFO",
+                             "Pacote '{}' nao instalado; tentando instalar via "
+                             "RPM local ({})...".format(module_package, module_rpm_dir))
+                        pacote_ja_instalado = instala_modulo_remoto(
+                            ip, ssh_user, sudo_cmd, module_rpm_dir, module_package,
+                            DEFAULT_MODULE_USERSPACE_PACKAGE,
+                            caminho_log, verbose, suprime_tela, caminho_log_local)
+                    else:
+                        _log("WARNING",
+                             "module_rpm_dir nao configurado; nao ha como "
+                             "instalar '{}' automaticamente.".format(module_package))
+
+                _log("INFO", "Tentando modprobe remoto...")
+                # "2>&1" mistura stderr no stdout do proprio comando remoto;
+                # por isso a mensagem de erro do modprobe sai em stdout_mp,
+                # nao em stderr_mp (que fica sempre vazio aqui e mascarava
+                # o motivo real da falha, ex.: "Invalid module format",
+                # constatado em teste real na VM 192.168.56.167).
+                rc_mp, stdout_mp, stderr_mp = _ssh(
                     "{} modprobe amibios_dmi 2>&1".format(sudo_cmd), timeout=15)
+                detalhe_modprobe = stdout_mp.strip() or stderr_mp.strip()
 
                 # Verifica interface apos modprobe
                 rc_check, stdout_check, _ = _ssh(
@@ -341,9 +407,21 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                     _log("INFO", "Modulo amibios_dmi carregado via modprobe remoto.")
                     iface_pronta = True
                 else:
+                    # Diagnostico: dmesg ajuda a distinguir "modulo nao
+                    # carregou" (insmod falhou) de "modulo carregou mas o
+                    # handshake SMI falhou" (ex.: SMI error 0x84 no INFO,
+                    # ver amibios_smi.c do fork), constatado em campo
+                    # (10.24.80.96, 2026-07-16): insmod pode retornar rc=0
+                    # sem a interface aparecer.
+                    _, dmesg_out, _ = _ssh(
+                        "dmesg 2>/dev/null | tail -15", timeout=10)
                     _log("ERROR",
                          "Interface sysfs indisponivel apos modprobe: {}".format(
-                             stderr_mp.strip()))
+                             detalhe_modprobe or "sem mensagem de erro"))
+                    if dmesg_out.strip():
+                        _log("ERROR", "dmesg (ultimas linhas) apos modprobe:")
+                        for linha in dmesg_out.strip().splitlines():
+                            _log("ERROR", "  {}".format(linha.strip()))
 
         if not iface_pronta:
             raise MecanismoIndisponivelError(
