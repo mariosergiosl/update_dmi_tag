@@ -17,7 +17,15 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.3
+# VERSION: 2.2.4
+# REVISION: 2026-07-16 - v2.2.4 - corrige layout do log: a saida de erro
+#                        do zypper install (varias linhas) era passada
+#                        inteira num unico _log(), entao so a primeira
+#                        linha recebia o prefixo padrao (timestamp/nivel/
+#                        host) e o resto aparecia cru no arquivo,
+#                        quebrando o layout (mesma classe de problema ja
+#                        corrigida no dump do dmesg). Agora loga linha a
+#                        linha, cada uma com seu proprio prefixo.
 # REVISION: 2026-07-16 - v2.2.3 - implementa de vez a instalacao remota
 #                        do KMP amibios_dmi (ate entao so preparada, nunca
 #                        conectada ao caminho remoto real, ver bios_sysfs.py
@@ -750,8 +758,18 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
         " ".join(nomes_arquivos)))
     rc, stdout, stderr = ssh_run(ip, ssh_user, cmd_install, timeout=120)
     if rc != 0:
-        _log("ERROR", "zypper install falhou (rc={}): {}".format(
-            rc, _filtra_banner(stderr).strip() or _filtra_banner(stdout).strip()))
+        # A saida do zypper costuma vir em varias linhas (mensagem de
+        # conflito, opcoes de resolucao, etc.); loga linha a linha, cada
+        # uma com o prefixo padrao (timestamp/nivel/host), em vez de uma
+        # unica chamada com string multi-linha -- isso deixava so a
+        # primeira linha prefixada e o resto cru no arquivo, quebrando o
+        # layout do log (mesma classe de problema ja corrigida no dump do
+        # dmesg, ver bios_sysfs.py).
+        saida_erro = _filtra_banner(stderr).strip() or _filtra_banner(stdout).strip()
+        _log("ERROR", "zypper install falhou (rc={}):".format(rc))
+        for linha_erro in saida_erro.splitlines():
+            if linha_erro.strip():
+                _log("ERROR", "  {}".format(linha_erro.strip()))
         return False
 
     instalado = verifica_pacote_rpm_remoto(

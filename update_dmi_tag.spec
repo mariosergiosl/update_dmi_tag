@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.3
+Version:        2.2.4
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -59,8 +59,11 @@ cp -a efi_boot %{buildroot}/opt/%{name}/
 cp -a rpm %{buildroot}/opt/%{name}/
 
 # Documentacao, licenca e exemplos que o operador consulta junto do codigo
-cp -a manual_operacao.md README.md LICENSE.md ErrCode.txt \
+cp -a manual_operacao.md manual_operacao.pdf README.md LICENSE.md ErrCode.txt \
     survey_asset_tag.bash bb_repo.conf.example %{buildroot}/opt/%{name}/
+
+# Imagens de marca (logo/banner) referenciadas pelo manual_operacao.md
+cp -a assets %{buildroot}/opt/%{name}/
 
 # Limpeza de artefatos de desenvolvimento que nao devem ir no pacote
 find %{buildroot}/opt/%{name} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
@@ -85,6 +88,19 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.4-0
+- Corrige layout do log: a saida de erro do zypper install (varias
+  linhas) era passada inteira num unico registro de log, entao so a
+  primeira linha recebia o prefixo padrao e o resto aparecia cru no
+  arquivo. Agora loga linha a linha, cada uma com seu proprio prefixo.
+- Adiciona pasta assets/ (logo/banner) e aplica layout de cabecalho
+  padrao (autor, versao, data, status) no manual_operacao.md e no
+  Docs_Test_boot/README.md.
+- Adiciona evidencia fotografica e registro do incidente de producao
+  (host PERTOSA GA-H81M-S2PH, 10.24.80.96) no Docs_Test_boot/README.md,
+  incluindo a investigacao com o modulo amibios_dmi corrigido.
+- Documenta, no manual_operacao.md, um exemplo completo de linha de
+  comando com todas as opcoes relevantes explicadas uma a uma.
 * Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.3-0
 - Implementa de vez a instalacao remota automatica do KMP amibios_dmi
   (fork open-source mariosergiosl/amibios_dmi, GPLv2, nao e NDA):

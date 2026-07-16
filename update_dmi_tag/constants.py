@@ -13,7 +13,10 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.3
+# VERSION: 2.2.4
+# REVISION: 2026-07-16 - v2.2.4 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-16 - v2.2.3 - adiciona DEFAULT_MODULE_USERSPACE_PACKAGE
 #                        e DEFAULT_MODULE_RPM_DIR (pasta rpm/ do projeto)
 #                        para a instalacao remota automatica do KMP
@@ -146,7 +149,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.2.3"
+SCRIPT_VERSION = "2.2.4"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
