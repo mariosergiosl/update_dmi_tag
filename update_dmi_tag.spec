@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.4
+Version:        2.2.5
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -88,6 +88,15 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.5-0
+- Corrige bug real de corrida entre threads: prepara_autenticacao_ssh
+  checava e gerava a chave SSH local (recurso compartilhado entre
+  todos os hosts) sem lock. Com --parallel > 1 e nenhuma chave local
+  previa, duas threads podiam tentar gerar a mesma chave ao mesmo
+  tempo; uma falhava por corrida, levando o host dessa thread a
+  INACESSIVEL sem motivo real. Corrigido com threading.Lock.
+- Validado em campo (--parallel 3, 3 hosts reais heterogeneos: 2 VMs
+  clonadas e um notebook Dell, ambiente sem chave SSH local previa).
 * Thu Jul 16 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.4-0
 - Corrige layout do log: a saida de erro do zypper install (varias
   linhas) era passada inteira num unico registro de log, entao so a

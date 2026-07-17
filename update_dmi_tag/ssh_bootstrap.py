@@ -21,7 +21,23 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.4
+# VERSION: 2.2.5
+# REVISION: 2026-07-17 - v2.2.5 - corrige BUG REAL de corrida entre
+#                        threads: prepara_autenticacao_ssh checava e
+#                        gerava a chave SSH local (recurso compartilhado
+#                        entre todos os hosts) sem nenhum lock. Com
+#                        --parallel > 1 e nenhuma chave local previa,
+#                        duas threads podiam checar "chave ausente" ao
+#                        mesmo tempo; uma gerava a chave, a outra
+#                        chamava ssh-keygen sobre o arquivo que acabara
+#                        de aparecer e falhava (stdin e DEVNULL, sem
+#                        confirmacao interativa de sobrescrita), levando
+#                        o host dessa segunda thread a INACESSIVEL sem
+#                        motivo real. Corrigido com threading.Lock
+#                        (_lock_chave_ssh_local) ao redor da checagem+
+#                        geracao. Constatado e corrigido em teste real
+#                        (--parallel 3, 3 hosts, ambiente sem chave SSH
+#                        local previa, 2026-07-17).
 # REVISION: 2026-07-16 - v2.2.4 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -66,11 +82,22 @@
 
 import os
 import subprocess
+import threading
 import time
 
 from .constants import DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_ED25519
 from .logging_utils import gravar_log
 from .ssh_utils import testa_conexao_ssh
+
+# Protege a checagem+geracao da chave SSH local (recurso compartilhado
+# entre todos os hosts) contra corrida entre threads do --parallel: sem
+# isso, duas threads podem checar "chave ausente" ao mesmo tempo e uma
+# delas falha no ssh-keygen porque a outra ja criou o arquivo entre a
+# checagem e a geracao (ssh-keygen nao sobrescreve sem confirmacao
+# interativa, que nao existe aqui, stdin e DEVNULL). Constatado em teste
+# real (--parallel 3, 3 hosts, ambiente sem nenhuma chave SSH local
+# previa, 2026-07-17).
+_lock_chave_ssh_local = threading.Lock()
 
 
 def _localiza_chave_ssh_local():
@@ -453,19 +480,23 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
              bootstrap. False indica falha definitiva (caller marca
              como INACESSIVEL).
     """
-    # 1. Localiza chave existente
-    chave_priv, chave_pub = _localiza_chave_ssh_local()
-
-    # 2. Gera se nenhuma existir
-    if chave_priv is None:
-        chave_priv, chave_pub = _gera_chave_ssh_local(
-            caminho_log_local, verbose)
+    # 1. Localiza chave existente, 2. gera se nenhuma existir. Protegido
+    # por lock porque a chave e um recurso compartilhado entre todos os
+    # hosts/threads (ver _lock_chave_ssh_local acima) -- sem isso, com
+    # --parallel > 1 e nenhuma chave previa, duas threads podem tentar
+    # gerar a mesma chave ao mesmo tempo e uma falha por corrida.
+    with _lock_chave_ssh_local:
+        chave_priv, chave_pub = _localiza_chave_ssh_local()
         if chave_priv is None:
-            gravar_log(caminho_log_local, "ERROR",
-                       "[{}] Bootstrap SSH: nao foi possivel obter uma "
-                       "chave SSH local".format(ip),
-                       verbose, False)
-            return False
+            chave_priv, chave_pub = _gera_chave_ssh_local(
+                caminho_log_local, verbose)
+
+    if chave_priv is None:
+        gravar_log(caminho_log_local, "ERROR",
+                   "[{}] Bootstrap SSH: nao foi possivel obter uma "
+                   "chave SSH local".format(ip),
+                   verbose, False)
+        return False
 
     # 3. Caminho feliz: chave ja distribuida (BatchMode=yes funciona)
     if testa_conexao_ssh(ip, ssh_user):
