@@ -215,11 +215,11 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
   confirmacao interativa.
 - Corrige um crash nao tratado (OSError) na escrita local do sysfs
   (Mecanismo 2, modo standalone).
-* Sun Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.14-0
+* Mon Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.14-0
 - Renumeracao do mecanismo de boot EFI de "Mecanismo 4" para
   "Mecanismo 3" (elimina o buraco na numeracao da cascata: 1, 2, 3). So
   exibicao (log/ajuda/docs); identificadores funcionais inalterados.
-* Sun Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.13-0
+* Mon Jul 13 2026 Mario Luz <mario.mssl@gmail.com> - 2.1.13-0
 - Corrige travamento do Mecanismo 3 (timeout no SSH de gravar_log_remoto;
   antes, logar apos o reboot pendurava a ferramenta para sempre).
 - Idempotencia do Mecanismo 3: re-execucao apos termino anormal se
