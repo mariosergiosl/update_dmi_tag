@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.5
+Version:        2.2.8
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -88,6 +88,46 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.8-0
+- Trava global de seguranca: se a tag ja lida na BIOS (tag_antes) for
+  igual a esperada, nenhum mecanismo e executado (sem escrita, sem
+  reboot) e o resultado vira "OK-ja-correto". Evita reprocessar hosts
+  ja corretos e, em especial, evita escalar ao Mecanismo 3 (reboot)
+  sem necessidade. Vale so no modo de escrita real (--write sem
+  --test-write).
+- Resumo agregado passa a contabilizar e exibir o total "OK-ja-correto".
+- Revisao de codigo: corrige a validacao redundante via CLI patrimonial
+  (faltava --verbose, entao ela nunca retornava nada; e o parse
+  descartava o "X" final de BEMs com DV=10). Remove chamada SSH
+  duplicada em --production e ternario sem efeito na auditoria de RPMs.
+- Nova suite de regressao automatizada em tests/ (30 testes, stdlib
+  pura, SSH mockado): python3 -m unittest discover tests.
+- Documentacao: 5 diagramas novos (fluxo macro, fluxo de codigo,
+  cascata, Mecanismo 3, arquitetura) em assets/diagramas, secao 2.4.
+* Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.7-0
+- Corrige bug real no digito verificador (Modulo 11): quando o DV dava
+  10, a funcao retornava "0", mas o padrao BB usa "X" para DV=10
+  (confirmado contra o utilitario oficial python3-patrimonial). Antes,
+  cerca de 1 em 11 BEMs (os que caem em DV=10) recebiam a tag errada,
+  terminando em 0 em vez de X. O DV=11 continua "0".
+- Documenta a estrutura da base patrimonial: PPPP.AA.DDD.NNNN + DV
+  (prefixo comprador, ano do contrato, dia do ano do range, serie).
+* Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.6-0
+- Corrige bug real de campo (host de producao PERTOSA GA-H81M-S2PH):
+  com o modulo amibios_dmi carregado e usuario SSH comum (nao root), o
+  Mecanismo 2 falhava na escrita e caia no Mecanismo 3 (reboot) sem
+  necessidade. O sysfs da asset tag e root-only, mas a leitura (cat), a
+  checagem de gravabilidade (test -w) e a auditoria rodavam sem sudo,
+  como usuario comum, barrando o sudo tee que faria a escrita. Agora
+  todos usam sudo, coerente com a escrita.
+- Guarda de dry-run no Mecanismo 2: no caso de borda em que o Mecanismo
+  1 esta indisponivel e a cascata cai no Mecanismo 2 sem --write, nao
+  instala/carrega mais o modulo (dry-run e apenas leitura).
+- instala_modulo_remoto remove do home do usuario os .rpm que copia,
+  em qualquer desfecho, para nao deixar arquivos orfaos.
+- Documentacao: exemplo de linha de comando usa python3 -m (nao
+  python -m), evitando a chamada acidental do Python 2 em ambientes
+  onde "python" aponta para o interpretador antigo.
 * Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.5-0
 - Corrige bug real de corrida entre threads: prepara_autenticacao_ssh
   checava e gerava a chave SSH local (recurso compartilhado entre

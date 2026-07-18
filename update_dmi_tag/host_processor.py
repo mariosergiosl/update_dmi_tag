@@ -15,7 +15,30 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.5
+# VERSION: 2.2.8
+# REVISION: 2026-07-17 - v2.2.8 - trava global: antes de acionar a cascata
+#                        de escrita, compara a tag ja lida na BIOS
+#                        (tag_antes) com a tag esperada. Se forem iguais,
+#                        nenhum mecanismo e executado (sem escrita, sem
+#                        reboot) e o resultado vira "OK-ja-correto". Evita
+#                        reprocessar hosts que ja estao corretos e, em
+#                        especial, evita escalar ao Mecanismo 3 (reboot) sem
+#                        necessidade. Vale so no modo de escrita real
+#                        (--write sem --test-write). Revisao de codigo na
+#                        mesma versao: remove chamada SSH duplicada de
+#                        "which reinstall-enable" em _executa_acoes_production
+#                        (o primeiro resultado nunca era usado, custava uma
+#                        viagem SSH extra por host em --production); simplifica
+#                        ternario sem efeito no nivel de log da auditoria de
+#                        RPMs (sempre resultava DEBUG); ajusta mensagem de log
+#                        do CLI patrimonial para nao afirmar "nao esta no
+#                        PATH" quando o CLI existe mas nao deu retorno valido.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -247,9 +270,8 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         # pode retornar mensagem em portugues no stdout
         linhas_rpm = [x.strip() for x in stdout_rpm.splitlines() if x.strip()]
         nvr = linhas_rpm[0] if linhas_rpm else "AUSENTE"
-        nivel_rpm = "DEBUG" if "AUSENTE" not in nvr else "DEBUG"
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
-                          nivel_rpm,
+                          "DEBUG",
                           "RPM {}: {}".format(pkg, nvr),
                           caminho_log_local, args.verbose, args.csv)
 
@@ -337,7 +359,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
     else:
         gravar_log_remoto(
             ip, ssh_user, sudo_cmd, caminho_log_remoto, "DEBUG",
-            "CLI patrimonial nao disponivel no PATH local",
+            "CLI patrimonial indisponivel no PATH local ou sem retorno valido",
             caminho_log_local, args.verbose, args.csv)
 
     # 8. Cascata de escrita
@@ -361,11 +383,29 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
             caminho_log_local, args.verbose, args.csv)
         return registro
 
-    resultado_escrita = tenta_escrever_tag_remoto(
-        ip, ssh_user, sudo_cmd, tag_esperada, args,
-        caminho_log_remoto, caminho_log_local,
-        caminho_log_efi=caminho_log_efi,
-    )
+    # 8.1. Trava global: se a tag ja esta correta na BIOS, nao roda nenhum
+    # mecanismo (sem escrita, sem reboot). Serve, principalmente, para nao
+    # escalar para o Mecanismo 3 (reboot) quando nao ha nada a corrigir, e
+    # tambem evita escrita SMI redundante. So aplica em gravacao real
+    # (--write); em dry-run e --test-write o fluxo segue para simular/
+    # validar. Usa a tag lida na auditoria (tag_antes, via dmidecode). A
+    # sincronizacao do BBconfig.conf continua rodando abaixo (resultado
+    # comeca com "OK"), pois a tag estar correta nao garante o BBconfig
+    # sincronizado.
+    if (args.write and not getattr(args, "test_write", False)
+            and registro.get("tag_antes", "N/D") == tag_esperada):
+        gravar_log_remoto(
+            ip, ssh_user, sudo_cmd, caminho_log_remoto, "INFO",
+            "Tag ja esta correta na BIOS ('{}'); nenhum mecanismo executado "
+            "(sem escrita, sem reboot).".format(tag_esperada),
+            caminho_log_local, args.verbose, args.csv)
+        resultado_escrita = "OK-ja-correto"
+    else:
+        resultado_escrita = tenta_escrever_tag_remoto(
+            ip, ssh_user, sudo_cmd, tag_esperada, args,
+            caminho_log_remoto, caminho_log_local,
+            caminho_log_efi=caminho_log_efi,
+        )
     # resultado ja e descritivo (ex: "OK-amidelnx", "FALHOU-todos")
     registro["resultado"] = resultado_escrita
 
@@ -481,9 +521,6 @@ def _executa_acoes_production(ip, ssh_user, sudo_cmd, args,
                           nivel, msg, caminho_log_local, args.verbose, args.csv)
 
     # reinstall-enable
-    rc_which, _, _ = ssh_run(
-        ip, ssh_user,
-        "which reinstall-enable 2>/dev/null || echo AUSENTE", timeout=10)
     _, which_out, _ = ssh_run(
         ip, ssh_user,
         "which reinstall-enable 2>/dev/null || echo AUSENTE", timeout=10)

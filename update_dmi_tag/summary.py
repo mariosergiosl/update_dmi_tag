@@ -13,7 +13,18 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.5
+# VERSION: 2.2.8
+# REVISION: 2026-07-17 - v2.2.8 - contabiliza o novo resultado
+#                        "OK-ja-correto" (tag ja estava correta na BIOS,
+#                        nenhum mecanismo executado). Soma esse total ao
+#                        ok_total e exibe uma linha propria no resumo
+#                        agregado, com sua descricao em _DESCRICOES_RESULTADO.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -154,6 +165,7 @@ def _normaliza_bios_vendor(bios_vendor):
 # usado no sumario agregado. Chaves sao comparadas por prefixo (ex:
 # "FALHOU" cobre "FALHOU-todos"; "INACESSIVEL" e exato).
 _DESCRICOES_RESULTADO = (
+    ("OK-ja-correto", "Tag ja estava correta na BIOS; nenhum mecanismo executado (sem escrita, sem reboot)."),
     ("OK-efiboot",  "Sucesso via Mecanismo 3 (boot EFI temporario apos reboot unico, ver log dedicado)."),
     ("OK-amidelnx", "Sucesso. Gravacao confirmada via amidelnx_64 (Mecanismo 1)."),
     ("OK-amibios",  "Sucesso. Gravacao confirmada via amibios_dmi/sysfs (Mecanismo 2, fallback)."),
@@ -378,7 +390,11 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     # Gravacoes bem-sucedidas (qualquer mecanismo)
     ok_amidelnx = sum(1 for r in registros if r.get("resultado") == "OK-amidelnx")
     ok_amibios  = sum(1 for r in registros if r.get("resultado") == "OK-amibios")
-    ok_total    = ok_amidelnx + ok_amibios
+    # Tag ja estava correta: nenhum mecanismo rodou (trava global). Conta
+    # como sucesso, mas em bucket proprio para deixar claro que nao houve
+    # gravacao nova.
+    ja_correto  = sum(1 for r in registros if r.get("resultado") == "OK-ja-correto")
+    ok_total    = ok_amidelnx + ok_amibios + ja_correto
 
     # Simulacao sem gravacao
     dryrun = sum(1 for r in registros if r.get("resultado") == "DRY-RUN")
@@ -426,6 +442,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
 
     _escreve("  Gravacao OK (amidelnx_64)  : {:3d}  -- escrita confirmada via Mecanismo 1".format(ok_amidelnx))
     _escreve("  Gravacao OK (amibios_dmi)  : {:3d}  -- escrita confirmada via Mecanismo 2 (fallback)".format(ok_amibios))
+    _escreve("  Ja correto (OK-ja-correto) : {:3d}  -- tag ja estava correta, nada a fazer (sem escrita, sem reboot)".format(ja_correto))
     _escreve("  Simulacao (DRY-RUN)        : {:3d}  -- apenas leitura, nenhuma gravacao executada".format(dryrun))
     _escreve("  Falha na escrita (FALHOU)  : {:3d}  -- cascata tentada, BIOS rejeitou ambos os mecanismos".format(falhou))
     _escreve("  Incompativel (INCOMPATIVEL-HW): {:3d}  -- Mecanismos 1/2 rejeitados com assinatura de firmware conhecida".format(incompativel_hw))

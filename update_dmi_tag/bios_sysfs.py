@@ -17,7 +17,31 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.5
+# VERSION: 2.2.8
+# REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - corrige BUG REAL de campo (host
+#                        10.24.80.96, PERTOSA GA-H81M-S2PH, producao):
+#                        com o modulo amibios_dmi carregado e usuario SSH
+#                        comum (nao root), o Mecanismo 2 falhava na escrita
+#                        e caia no Mecanismo 3 (reboot) sem necessidade. O
+#                        sysfs da asset tag e root-only (-rw-------), mas a
+#                        leitura ("cat"), a checagem de gravabilidade
+#                        ("test -w") e a auditoria rodavam SEM sudo, como
+#                        usuario comum: "cat" dava permissao negada
+#                        (DESCONHECIDO) e "test -w" dava falso, barrando o
+#                        "sudo tee" (que funcionaria) antes de executar.
+#                        Agora leitura, test -w e auditoria usam sudo,
+#                        coerente com a escrita. Adiciona tambem guarda de
+#                        dry-run: no caso de borda em que o Mecanismo 1
+#                        esta indisponivel e a cascata cai no Mecanismo 2
+#                        sem --write, nao instala/carrega o modulo (dry-run
+#                        e apenas leitura); antes o bloco de instalacao
+#                        rodava antes da checagem de dry_run.
 # REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -369,6 +393,24 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
         iface_pronta = (stdout_iface.strip() == "ready")
 
         if not iface_pronta:
+            # Em dry-run nao instala nem carrega nada: a interface nao estar
+            # pronta significa que, em modo real, o modulo seria instalado
+            # (zypper) e carregado (modprobe), e ambos alteram o host. Dry-run
+            # e "apenas leitura", entao apenas loga a intencao e retorna, sem
+            # tocar no alvo. Esse caminho so e alcancado no caso de borda em
+            # que o Mecanismo 1 (amidelnx) esta indisponivel e a cascata cai
+            # aqui mesmo sem --write (ver write_cascade.py); no caso normal, o
+            # Mecanismo 1 em dry-run ja encerra a cascata antes daqui.
+            if dry_run:
+                _log("WARNING",
+                     "[DRY-RUN] Interface amibios_dmi indisponivel no alvo; em "
+                     "modo real o modulo seria instalado/carregado antes de "
+                     "gravar a tag '{}'.".format(tag))
+                _log("WARNING",
+                     "[DRY-RUN] Para gravar (e instalar o modulo se preciso), "
+                     "passe a flag -w ou --write.")
+                return False, "DRY-RUN"
+
             # Verifica se o modulo esta carregado
             rc_mod, stdout_mod, _ = _ssh(
                 "test -d {} && echo loaded || echo absent".format(SYSMODULE_PATH))
@@ -433,9 +475,14 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
             raise MecanismoIndisponivelError(
                 "Interface sysfs amibios_dmi indisponivel no alvo {}".format(ip))
 
-        # Leitura do valor antigo
+        # Leitura do valor antigo. Com sudo: o sysfs da asset tag
+        # (/sys/firmware/amibios/chassis/asset_tag) e root-only (-rw-------),
+        # entao um "cat" como usuario SSH comum retorna permissao negada e
+        # da DESCONHECIDO mesmo com o modulo carregado (constatado em campo,
+        # host 10.24.80.96, 2026-07-17, com usuario nao-root f6819061).
         rc_read, valor_antigo, _ = _ssh(
-            "cat {} 2>/dev/null || echo DESCONHECIDO".format(sysfs_target))
+            "{} cat {} 2>/dev/null || echo DESCONHECIDO".format(
+                sudo_cmd, sysfs_target))
         valor_antigo = valor_antigo.strip()
         _log("INFO", "Valor antigo na BIOS (sysfs remoto): '{}'".format(valor_antigo))
 
@@ -455,8 +502,16 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
         _log("INFO",
              "Mecanismo 2: gravando via sysfs amibios_dmi remoto: {}".format(tag))
 
+        # "sudo test -w": o sysfs e root-only (-rw-------), entao a checagem
+        # de gravabilidade tem que rodar via sudo, coerente com o "sudo tee"
+        # que faz a escrita de fato. Sem o sudo no test, ele rodava como
+        # usuario SSH comum, dava falso, e o "sudo tee" (que funcionaria)
+        # nunca era alcancado -- falso "sysfs rejeitou a escrita", que
+        # derrubava o Mecanismo 2 e disparava o Mecanismo 3 (reboot) sem
+        # necessidade (constatado em campo, host 10.24.80.96, 2026-07-17,
+        # usuario nao-root, com o modulo ja carregado).
         cmd_write = (
-            "test -w {sysfs} && echo '{tag}' | {sudo} tee {sysfs} > /dev/null"
+            "{sudo} test -w {sysfs} && echo '{tag}' | {sudo} tee {sysfs} > /dev/null"
             " || echo WRITE_ERROR"
         ).format(sysfs=sysfs_target, tag=tag, sudo=sudo_cmd)
 
@@ -474,9 +529,11 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
 
         _log("INFO", "Operacao de escrita remota concluida.")
 
-        # Auditoria pos-escrita
+        # Auditoria pos-escrita (com sudo, mesmo motivo da leitura inicial:
+        # sysfs root-only).
         rc_audit, valor_novo, _ = _ssh(
-            "cat {} 2>/dev/null || echo AUDIT_FAILED".format(sysfs_target))
+            "{} cat {} 2>/dev/null || echo AUDIT_FAILED".format(
+                sudo_cmd, sysfs_target))
         valor_novo = valor_novo.strip()
         _log("INFO", "Valor auditado pos-escrita: '{}'".format(valor_novo))
 

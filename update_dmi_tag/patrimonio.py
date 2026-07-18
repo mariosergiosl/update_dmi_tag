@@ -15,7 +15,33 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.5
+# VERSION: 2.2.8
+# REVISION: 2026-07-17 - v2.2.8 - corrige dois bugs na validacao redundante
+#                        valida_via_patrimonial_cli (nunca corrigidos na
+#                        v2.2.7, que so tratou calcula_dv_modulo11):
+#                        1) faltava --verbose na chamada do CLI patrimonial;
+#                        sem ele o utilitario valida mas nao imprime o numero
+#                        completado, entao a funcao sempre retornava vazio e
+#                        a validacao redundante nunca acontecia de fato;
+#                        2) o parse filtrava so digitos (isdigit), descartando
+#                        o "X" final de BEMs com DV=10, o que geraria WARNING
+#                        falso de divergencia exatamente nesses BEMs. Agora o
+#                        parse pega o primeiro token da saida e aceita 13
+#                        digitos + DV numerico ou "X".
+# REVISION: 2026-07-17 - v2.2.7 - corrige BUG REAL no DV do Modulo 11:
+#                        quando o DV bruto (11 - resto) dava 10, a funcao
+#                        calcula_dv_modulo11 retornava "0", mas o padrao
+#                        do BB representa DV=10 como "X" (confirmado contra
+#                        o utilitario oficial python3-patrimonial:
+#                        7417161830009 -> ...X, 7417191152222 -> ...X). O
+#                        DV=11 (resto 0) continua "0". Antes disso, cerca
+#                        de 1 em 11 BEMs (os que caem em DV=10) recebiam a
+#                        tag errada, terminando em 0 em vez de X. Documenta
+#                        tambem a estrutura da base: PPPP.AA.DDD.NNNN + DV
+#                        (ver docstring de calcula_dv_modulo11).
+# REVISION: 2026-07-17 - v2.2.6 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -74,19 +100,34 @@ from .logging_utils import gravar_log
 def calcula_dv_modulo11(base_num):
     """
     NAME: calcula_dv_modulo11
-    DESCRIPTION: Calcula o digito verificador usando o algoritmo de Modulo 11
-                 do Banco do Brasil. Multiplicadores da direita para a
-                 esquerda: 2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5, 6.
-                 Se o resultado for 10 ou 11, retorna "0".
+    DESCRIPTION: Calcula o digito verificador (DV) do numero patrimonial do
+                 Banco do Brasil pelo algoritmo de Modulo 11.
+
+                 Estrutura da base de 13 digitos (PPPP.AA.DDD.NNNN):
+                   PPPP - prefixo do comprador (hoje 7417)
+                   AA   - ano de assinatura do contrato
+                   DDD  - dia do ano da geracao do range (001 a 366)
+                   NNNN - serie do range (0000 a 9999)
+                 O DV (1 caractere) fecha o numero em 14 posicoes.
+
+                 Multiplicadores da direita para a esquerda:
+                   2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5, 6.
+                 dv = 11 - (soma % 11). Convencao do DV, confirmada contra o
+                 utilitario oficial python3-patrimonial (2026-07-17):
+                   dv == 11 (resto 0) -> "0"
+                   dv == 10 (resto 1) -> "X" (ex.: 7417161830009 -> ...X)
+                   dv de 1 a 9        -> o proprio digito
     PARAMETER: base_num - string numerica de 13 digitos
-    RETURNS: str, digito verificador ("0" a "9")
+    RETURNS: str, digito verificador ("0" a "9" ou "X")
     """
     pesos = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
     soma = sum(int(d) * p for d, p in zip(base_num, pesos))
     resto = soma % 11
     dv = 11 - resto
-    if dv in (10, 11):
+    if dv == 11:
         return "0"
+    if dv == 10:
+        return "X"
     return str(dv)
 
 
@@ -95,14 +136,17 @@ def valida_via_patrimonial_cli(base_num, caminho_log, verbose, suprime_tela,
     """
     NAME: valida_via_patrimonial_cli
     DESCRIPTION: Validacao redundante via utilitario CLI oficial patrimonial.
-                 Retorna o valor de 14 digitos resultante ou string vazia
-                 em caso de falha ou indisponibilidade do comando.
+                 Retorna o valor de 14 posicoes resultante (13 digitos + DV,
+                 onde o DV pode ser "X" para DV=10) ou string vazia em caso
+                 de falha ou indisponibilidade do comando. O --verbose e
+                 obrigatorio: sem ele o patrimonial valida mas nao imprime
+                 o numero completado (constatado no CLI real, 2026-07-17).
     PARAMETER: base_num          - string numerica de 13 digitos
                caminho_log       - log principal
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: str, 14 digitos ou string vazia
+    RETURNS: str, 14 posicoes (digitos + DV, DV pode ser "X") ou vazia
     """
     def _log(nivel, msg):
         gravar_log(caminho_log, nivel, msg, verbose, suprime_tela,
@@ -110,17 +154,25 @@ def valida_via_patrimonial_cli(base_num, caminho_log, verbose, suprime_tela,
 
     try:
         resultado = subprocess.run(
-            ["patrimonial", "--non-strict", base_num],
+            ["patrimonial", "--non-strict", "--verbose", base_num],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
             check=False,
         )
         if resultado.returncode == 0:
-            saida = resultado.stdout.strip()
-            numeros = "".join(filter(str.isdigit, saida))
-            _log("DEBUG", "Validacao redundante CLI patrimonial: {}".format(numeros))
-            return numeros
+            # Saida esperada (com --verbose): "<numero14>\tNumero valido".
+            # O numero e o primeiro token; preserva o "X" final (DV=10 no
+            # padrao BB), que o filtro antigo por isdigit descartava.
+            tokens = resultado.stdout.strip().split()
+            candidato = tokens[0].upper() if tokens else ""
+            if (len(candidato) == 14 and candidato[:13].isdigit()
+                    and (candidato[13].isdigit() or candidato[13] == "X")):
+                _log("DEBUG", "Validacao redundante CLI patrimonial: {}".format(
+                    candidato))
+                return candidato
+            _log("DEBUG", "CLI patrimonial retornou saida inesperada: '{}'".format(
+                resultado.stdout.strip()))
     except FileNotFoundError:
         _log("DEBUG", "Comando CLI patrimonial nao esta no PATH")
     return ""

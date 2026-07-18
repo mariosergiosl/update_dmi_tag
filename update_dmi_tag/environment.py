@@ -17,7 +17,17 @@
 #
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
-# VERSION: 2.2.5
+# VERSION: 2.2.8
+# REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - instala_modulo_remoto passa a remover do
+#                        home do usuario SSH os .rpm que copia (em qualquer
+#                        desfecho, via _limpa_rpms_copiados), para nao
+#                        deixar arquivos orfaos acumulando entre execucoes.
 # REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -713,6 +723,17 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
              "RPM userspace ({}-*.rpm) nao encontrado em '{}'; "
              "seguindo so com o KMP.".format(userspace_package, rpm_dir))
 
+    def _limpa_rpms_copiados():
+        """Remove do home do usuario SSH os .rpm que copiamos (em qualquer
+        desfecho, sucesso ou falha), para nao deixar arquivos orfaos
+        acumulando entre execucoes. rm -f e seguro mesmo para arquivo que
+        nao chegou a ser copiado."""
+        alvos = " ".join(
+            "~/{}".format(shlex.quote(os.path.basename(c)))
+            for c in arquivos_para_copiar)
+        if alvos:
+            ssh_run(ip, ssh_user, "rm -f {}".format(alvos), timeout=15)
+
     caminhos_remotos = []
     nomes_arquivos = []
     for caminho_local in arquivos_para_copiar:
@@ -731,6 +752,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
             ip, ssh_user, caminho_local, caminho_remoto)
         if not sucesso:
             _log("ERROR", "Falha ao copiar {}: {}".format(nome_arquivo, erro))
+            _limpa_rpms_copiados()
             return False
 
         # Confere o SHA-256 remoto contra o arquivo local antes de instalar
@@ -748,6 +770,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
                  "SHA-256 do arquivo copiado nao confere ({}): "
                  "local={} remoto={}. Abortando instalacao.".format(
                      nome_arquivo, sha_local, sha_remoto or "N/D"))
+            _limpa_rpms_copiados()
             return False
 
         # Guarda a forma ja "tilde-safe" (so o nome do arquivo aspeado,
@@ -773,6 +796,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
         for linha_erro in saida_erro.splitlines():
             if linha_erro.strip():
                 _log("ERROR", "  {}".format(linha_erro.strip()))
+        _limpa_rpms_copiados()
         return False
 
     instalado = verifica_pacote_rpm_remoto(
@@ -785,6 +809,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
         _log("ERROR",
              "zypper install rodou sem erro, mas '{}' nao aparece instalado "
              "no alvo (rpm -q).".format(module_package))
+    _limpa_rpms_copiados()
     return instalado
 
 
