@@ -14,3 +14,4 @@ efi_boot/dmi-atm/bootx64_ANTIGO_problematico.efi
 iso/
 .ssh_pass
 update_dmi_tag-v*.zip
+packages_files/
