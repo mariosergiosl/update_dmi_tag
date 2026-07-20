@@ -14,6 +14,18 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - corrige bug real: o contador te_testado
+#                        (bloco "Teste de Escrita") nao contabilizava
+#                        "INCOMPATIVEL-HW" nem "BLOQUEADO-*", dois retornos
+#                        validos de tenta_teste_escrita_remoto
+#                        (write_cascade.py), subestimando o total exibido
+#                        ("Total testado: X de Y processados"). Adiciona
+#                        os contadores te_incompativel_hw/te_bloqueado e
+#                        as linhas correspondentes no sumario.
+# REVISION: 2026-07-20 - v2.2.8 - descricao de "BLOQUEADO-" passa a citar
+#                        tambem "falta de KMP para o kernel do host" entre
+#                        os motivos (novo status BLOQUEADO-KMP-kernel-
+#                        incompativel, ver write_cascade.py).
 # REVISION: 2026-07-17 - v2.2.8 - contabiliza o novo resultado
 #                        "OK-ja-correto" (tag ja estava correta na BIOS,
 #                        nenhum mecanismo executado). Soma esse total ao
@@ -173,7 +185,7 @@ _DESCRICOES_RESULTADO = (
     ("TRAVADO-POS-REBOOT", "ATENCAO: Mecanismo 3 reiniciou o host e ele nao respondeu via SSH, requer intervencao fisica."),
     ("INCOMPATIVEL-efiboot", "Hardware incompativel: o proprio AMIDEEFIx64.EFI rejeitou a gravacao em pre-boot (assinatura de firmware conhecida, ver log dedicado). Nao vale a pena repetir sem reflash de BIOS."),
     ("FALHOU-efiboot", "Mecanismo 3 tentado (host voltou do reboot) mas a tag nao conferiu."),
-    ("BLOQUEADO-",  "Mecanismo 3 nao foi tentado por seguranca (Secure Boot, TPM, espaco, etc., ver log dedicado)."),
+    ("BLOQUEADO-",  "Mecanismo 3 nao foi tentado por seguranca (Secure Boot, TPM, espaco, falta de KMP para o kernel do host, etc., ver log dedicado)."),
     ("INCOMPATIVEL-HW", "Hardware incompativel: os Mecanismos 1 e 2 rejeitaram a gravacao com assinatura de firmware conhecida (ver log). Nao vale a pena repetir sem --allow-efi-fallback ou reflash de BIOS."),
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
@@ -496,9 +508,13 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     te_ok_amidelnx      = sum(1 for r in registros if r.get("teste_escrita") == "OK-amidelnx")
     te_ok_amibios       = sum(1 for r in registros if r.get("teste_escrita") == "OK-amibios")
     te_falhou           = sum(1 for r in registros if r.get("teste_escrita") == "FALHOU-todos")
+    te_incompativel_hw  = sum(1 for r in registros if r.get("teste_escrita") == "INCOMPATIVEL-HW")
+    te_bloqueado        = sum(1 for r in registros
+                              if str(r.get("teste_escrita", "")).startswith("BLOQUEADO-"))
     te_restore_falhou   = sum(1 for r in registros if r.get("teste_escrita") == "RESTORE-FALHOU")
     te_tag_desconh      = sum(1 for r in registros if r.get("teste_escrita") == "TAG-DESCONH")
     te_testado          = (te_ok_amidelnx + te_ok_amibios + te_falhou
+                            + te_incompativel_hw + te_bloqueado
                             + te_restore_falhou + te_tag_desconh)
 
     if te_testado > 0:
@@ -510,6 +526,12 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
             te_ok_amibios))
         _escreve("  Incompativel (FALHOU-todos): {:3d}  -- nenhum mecanismo grava neste modelo hoje".format(
             te_falhou))
+        if te_incompativel_hw > 0:
+            _escreve("  Incompativel (INCOMPATIVEL-HW): {:3d}  -- Mecanismos 1/2 rejeitaram com assinatura de firmware conhecida".format(
+                te_incompativel_hw))
+        if te_bloqueado > 0:
+            _escreve("  Bloqueado (BLOQUEADO-*)    : {:3d}  -- Mecanismo 2 nao tentado por seguranca/politica (ex.: falta de KMP para o kernel do host)".format(
+                te_bloqueado))
         if te_restore_falhou > 0:
             _escreve("  ATENCAO (RESTORE-FALHOU)   : {:3d}  -- teste gravou, mas a restauracao do valor "
                      "virgem falhou; BIOS ficou com o valor de teste, corrija manualmente".format(

@@ -15,9 +15,40 @@
 #              modulo_esta_carregado e interface_esta_pronta distinguem
 #              "modulo inserido no kernel" de "interface SMI respondendo".
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - corrige 2 bugs no matching de kernel
+#                        (revisao externa dos diffs, mesma sessao):
+#                        (1) CRITICO: comparava o osrelease completo
+#                        ("versao-build-flavor") contra o nome do
+#                        arquivo ("kmp-flavor-versao-build.rpm", flavor
+#                        antes da versao), nunca batendo com nenhum
+#                        candidato real -- regressao total da instalacao
+#                        automatica do KMP. Corrigido removendo o sufixo
+#                        "-default" do osrelease antes de comparar.
+#                        (2) latente: a comparacao era por substring
+#                        ("in"), que cruzaria erroneamente versoes com
+#                        prefixo em comum (ex. "5.3.18-22" bateria com
+#                        um hipotetico "...-5.3.18-220.rpm"). Trocado
+#                        para igualdade exata do nome do arquivo
+#                        completo. Cobertura em tests/test_regressao.py,
+#                        TestInstalaModuloRemotoKernelMatching (exercita
+#                        a funcao real, nao mockada).
+# REVISION: 2026-07-20 - v2.2.8 - instala_modulo_remoto passa a casar o
+#                        kernel real do host (osrelease via SSH) contra o
+#                        nome dos candidatos a KMP antes de escolher, em
+#                        vez de pegar "o ultimo em ordem alfabetica" da
+#                        pasta. Bug real: com varios KMPs na mesma pasta
+#                        (um por SP, ver rpm/README.md), o codigo antigo
+#                        podia escolher um KMP de outro kernel e falhar
+#                        no zypper/modprobe sem motivo claro no log.
+#                        Assinatura de retorno muda de bool para
+#                        tuple(bool, str): o detalhe agora marca com
+#                        constants.MARCADOR_KMP_KERNEL_INCOMPATIVEL quando
+#                        a causa e falta de KMP para o kernel do host, para
+#                        write_cascade.py bloquear o Mecanismo 3 nesse
+#                        caso (ver bios_sysfs.py e write_cascade.py).
 # REVISION: 2026-07-20 - v2.2.8 - _limpa_rpms_copiados passa a logar
 #                        WARNING quando o "rm -f" remoto falha (antes o
 #                        retorno de ssh_run era descartado em silencio;
@@ -128,7 +159,9 @@ import os
 import shlex
 import subprocess
 
-from .constants import SYSMODULE_PATH, SYSFS_IFACE_PATH
+from .constants import (
+    SYSMODULE_PATH, SYSFS_IFACE_PATH, MARCADOR_KMP_KERNEL_INCOMPATIVEL,
+)
 from .logging_utils import gravar_log, gravar_log_remoto
 from .ssh_utils import ssh_run, _filtra_banner, _scp_arquivo_com_erro
 
@@ -697,8 +730,13 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
                verbose           - modo verbose
                suprime_tela      - suprime stdout
                caminho_log_local - log consolidado (opcional)
-    RETURNS: bool, True somente se o pacote KMP foi confirmado instalado
-             ao final (via rpm -q no alvo)
+    RETURNS: tuple(bool, str), (sucesso, detalhe). sucesso e True somente
+             se o pacote KMP foi confirmado instalado ao final (via rpm -q
+             no alvo). detalhe fica vazio no sucesso ou falha generica; se
+             a causa foi falta de KMP compilado para o kernel exato do
+             host, detalhe comeca com constants.MARCADOR_KMP_KERNEL_
+             INCOMPATIVEL (ver constants.eh_kmp_incompativel_com_kernel),
+             usado por write_cascade.py para nao escalar ao Mecanismo 3.
     """
     def _log(nivel, msg):
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
@@ -715,12 +753,69 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
     candidatos_userspace = sorted(glob.glob(padrao_userspace))
 
     if not candidatos_kmp:
-        _log("ERROR",
-             "Nenhum RPM do modulo encontrado em '{}' (padrao: {}-*.rpm).".format(
-                 rpm_dir, module_package))
-        return False
+        detalhe = (
+            "{}: nenhum RPM do modulo encontrado em '{}' (padrao: "
+            "{}-*.rpm).".format(MARCADOR_KMP_KERNEL_INCOMPATIVEL,
+                                 rpm_dir, module_package))
+        _log("ERROR", detalhe)
+        return False, detalhe
 
-    caminho_kmp_local = candidatos_kmp[-1]
+    # A pasta agora pode conter um KMP por SP (SP5/SP6/SP7, ver
+    # rpm/README.md e o projeto OBS home:mariosergiosl:amibios_dmi). O
+    # KMP so carrega no kernel exato para o qual foi compilado, entao
+    # nao da para so pegar "o ultimo em ordem alfabetica" (bug real:
+    # com varios candidatos na pasta, isso escolhia o KMP errado
+    # independente do kernel do host). Casa o kernel real do alvo
+    # (osrelease) contra o nome de cada arquivo antes de escolher.
+    rc_kernel, stdout_kernel, _ = ssh_run(
+        ip, ssh_user, "cat /proc/sys/kernel/osrelease", timeout=10)
+    kernel_alvo = stdout_kernel.strip()
+    if rc_kernel != 0 or not kernel_alvo:
+        detalhe = ("Nao foi possivel ler o kernel do host remoto "
+                    "(/proc/sys/kernel/osrelease) para escolher o KMP "
+                    "correto.")
+        _log("ERROR", detalhe)
+        return False, detalhe
+
+    # BUG REAL corrigido em 2026-07-20: osrelease vem no formato
+    # "<versao>-<build>-<flavor>" (ex.: "5.3.18-22-default"), mas o nome
+    # do arquivo e "amibios-dmi-kmp-<flavor>-<versao>-<build>.rpm" (o
+    # flavor vem ANTES da versao no nome, depois no osrelease). A
+    # comparacao por substring direta (kernel_alvo in nome_arquivo) nunca
+    # batia com nenhum candidato real, fazendo TODO host cair em
+    # KMP-KERNEL-MISMATCH mesmo com o RPM certo presente na pasta
+    # (regressao total da instalacao automatica do KMP). O flavor
+    # ("default", unico usado neste projeto, ver amibios-dmi.spec) e
+    # removido do fim do osrelease antes de comparar.
+    kernel_base = kernel_alvo
+    if kernel_base.endswith("-default"):
+        kernel_base = kernel_base[:-len("-default")]
+
+    # Comparacao por IGUALDADE do nome completo do arquivo, nao por
+    # substring: "in" permitiria colisao de prefixo (ex.: kernel_base
+    # "5.3.18-22" seria substring tanto de "...-5.3.18-22.rpm" quanto de
+    # um hipotetico "...-5.3.18-220.rpm"). O padrao de nome deste
+    # projeto e sempre exatamente "<module_package>-<kernel>.rpm" (ver
+    # rpm/README.md), entao a igualdade exata e sempre o suficiente e
+    # elimina essa classe de bug.
+    nome_esperado = "{}-{}.rpm".format(module_package, kernel_base)
+    candidatos_compat = [c for c in candidatos_kmp
+                         if os.path.basename(c) == nome_esperado]
+    if not candidatos_compat:
+        detalhe = (
+            "{}: host roda o kernel '{}', mas nenhum RPM em '{}' foi "
+            "compilado para esse kernel (candidatos disponiveis: {}). "
+            "Gere um novo build no projeto OBS "
+            "home:mariosergiosl:amibios_dmi (repos SP5/SP6/SP7) para esse "
+            "kernel e adicione o .rpm resultante a pasta, mantendo o "
+            "padrao de nome '{}-<kernel>.rpm'.".format(
+                MARCADOR_KMP_KERNEL_INCOMPATIVEL, kernel_alvo, rpm_dir,
+                ", ".join(os.path.basename(c) for c in candidatos_kmp),
+                module_package))
+        _log("ERROR", detalhe)
+        return False, detalhe
+
+    caminho_kmp_local = candidatos_compat[-1]
     arquivos_para_copiar = [caminho_kmp_local]
     if candidatos_userspace:
         arquivos_para_copiar.append(candidatos_userspace[-1])
@@ -768,7 +863,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
         if not sucesso:
             _log("ERROR", "Falha ao copiar {}: {}".format(nome_arquivo, erro))
             _limpa_rpms_copiados()
-            return False
+            return False, ""
 
         # Confere o SHA-256 remoto contra o arquivo local antes de instalar
         # como root -- garante que o zypper vai instalar exatamente os
@@ -786,7 +881,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
                  "local={} remoto={}. Abortando instalacao.".format(
                      nome_arquivo, sha_local, sha_remoto or "N/D"))
             _limpa_rpms_copiados()
-            return False
+            return False, ""
 
         # Guarda a forma ja "tilde-safe" (so o nome do arquivo aspeado,
         # "~/" fora das aspas) para reuso no comando de instalacao abaixo.
@@ -812,7 +907,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
             if linha_erro.strip():
                 _log("ERROR", "  {}".format(linha_erro.strip()))
         _limpa_rpms_copiados()
-        return False
+        return False, ""
 
     instalado = verifica_pacote_rpm_remoto(
         ip, ssh_user, sudo_cmd, module_package,
@@ -825,7 +920,7 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
              "zypper install rodou sem erro, mas '{}' nao aparece instalado "
              "no alvo (rpm -q).".format(module_package))
     _limpa_rpms_copiados()
-    return instalado
+    return instalado, ""
 
 
 def modulo_esta_carregado():

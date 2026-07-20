@@ -15,9 +15,31 @@
 #              presente, este mecanismo falha com SMI error 0x84 e o
 #              script usa o Mecanismo 1 (amidelnx_64) automaticamente.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - modprobe (local e remoto) passa a usar
+#                        --allow-unsupported ao carregar o amibios_dmi.
+#                        Bug real de campo (VMs de lab recem-provisionadas,
+#                        kernel/KMP batendo perfeitamente): o SLES bloqueia
+#                        por padrao o carregamento de modulos de terceiros
+#                        "unsupported" ("Use --allow-unsupported or set
+#                        allow_unsupported_modules 1"), mesmo com o KMP
+#                        certo instalado. A flag e por chamada (nao altera
+#                        nenhuma config persistente do host, ao contrario
+#                        de mexer em allow_unsupported_modules no
+#                        modprobe.d), entao nao ha nada para reverter
+#                        depois nem risco de deixar o host num estado
+#                        alterado se o script falhar no meio. modprobe -r
+#                        (descarregar) nao precisa da flag, so o
+#                        carregamento e afetado pela politica de suporte.
+# REVISION: 2026-07-20 - v2.2.8 - instala_modulo_remoto agora retorna
+#                        tuple(bool, str); executa_amibios_remoto propaga
+#                        o detalhe (com o marcador de kernel incompativel,
+#                        se for o caso) na MecanismoIndisponivelError, para
+#                        write_cascade.py bloquear o Mecanismo 3 quando a
+#                        causa e falta de KMP para o kernel do host (ver
+#                        environment.py, constants.py e write_cascade.py).
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -144,7 +166,7 @@ def _carrega_modulo_amibios(caminho_log, verbose, suprime_tela,
     _log("WARNING", "Interface amibios_dmi ausente. Tentando modprobe...")
     try:
         resultado = subprocess.run(
-            ["modprobe", "amibios_dmi"],
+            ["modprobe", "--allow-unsupported", "amibios_dmi"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
@@ -415,6 +437,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
             rc_mod, stdout_mod, _ = _ssh(
                 "test -d {} && echo loaded || echo absent".format(SYSMODULE_PATH))
             modulo_presente = (stdout_mod.strip() == "loaded")
+            detalhe_instalacao = ""
 
             if not modulo_presente:
                 _log("WARNING", "Modulo amibios_dmi ausente no alvo.")
@@ -428,7 +451,7 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                         _log("INFO",
                              "Pacote '{}' nao instalado; tentando instalar via "
                              "RPM local ({})...".format(module_package, module_rpm_dir))
-                        pacote_ja_instalado = instala_modulo_remoto(
+                        pacote_ja_instalado, detalhe_instalacao = instala_modulo_remoto(
                             ip, ssh_user, sudo_cmd, module_rpm_dir, module_package,
                             DEFAULT_MODULE_USERSPACE_PACKAGE,
                             caminho_log, verbose, suprime_tela, caminho_log_local)
@@ -444,7 +467,8 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                 # o motivo real da falha, ex.: "Invalid module format",
                 # constatado em teste real na VM 192.168.56.167).
                 rc_mp, stdout_mp, stderr_mp = _ssh(
-                    "{} modprobe amibios_dmi 2>&1".format(sudo_cmd), timeout=15)
+                    "{} modprobe --allow-unsupported amibios_dmi 2>&1".format(sudo_cmd),
+                    timeout=15)
                 detalhe_modprobe = stdout_mp.strip() or stderr_mp.strip()
 
                 # Verifica interface apos modprobe
@@ -472,8 +496,10 @@ def executa_amibios_remoto(ip, ssh_user, sudo_cmd, tag, sysfs_target,
                             _log("ERROR", "  {}".format(linha.strip()))
 
         if not iface_pronta:
-            raise MecanismoIndisponivelError(
-                "Interface sysfs amibios_dmi indisponivel no alvo {}".format(ip))
+            detalhe_final = "Interface sysfs amibios_dmi indisponivel no alvo {}".format(ip)
+            if detalhe_instalacao:
+                detalhe_final = "{} ({})".format(detalhe_final, detalhe_instalacao)
+            raise MecanismoIndisponivelError(detalhe_final)
 
         # Leitura do valor antigo. Com sudo: o sysfs da asset tag
         # (/sys/firmware/amibios/chassis/asset_tag) e root-only (-rw-------),

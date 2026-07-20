@@ -1,7 +1,7 @@
 # ==============================================================================
 # FILE: update_dmi_tag.spec
 # DESCRIPTION: RPM spec file para o update_dmi_tag
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # ==============================================================================
 
 Name:           update_dmi_tag
@@ -115,10 +115,11 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
   (faltava --verbose, entao ela nunca retornava nada; e o parse
   descartava o "X" final de BEMs com DV=10). Remove chamada SSH
   duplicada em --production e ternario sem efeito na auditoria de RPMs.
-- Nova suite de regressao automatizada em tests/ (30 testes, stdlib
+- Nova suite de regressao automatizada em tests/ (39 testes, stdlib
   pura, SSH mockado): python3 -m unittest discover tests.
-- Documentacao: 5 diagramas novos (fluxo macro, fluxo de codigo,
-  cascata, Mecanismo 3, arquitetura) em assets/diagramas, secao 2.4.
+- Documentacao: 8 diagramas em assets/diagramas, secao 2.4 (fluxo
+  macro, fluxo de codigo, cascata, Mecanismo 3, arquitetura, execucao
+  paralela, mapa de resultados, topologia de rede).
 * Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.7-0
 - Corrige bug real no digito verificador (Modulo 11): quando o DV dava
   10, a funcao retornava "0", mas o padrao BB usa "X" para DV=10

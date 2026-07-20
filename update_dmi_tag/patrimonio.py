@@ -13,7 +13,7 @@
 #              (13 ou 14 digitos) e retorna a tag final de 14 digitos,
 #              usada tanto no modo standalone quanto no remoto.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
 # REVISION: 2026-07-17 - v2.2.8 - corrige dois bugs na validacao redundante

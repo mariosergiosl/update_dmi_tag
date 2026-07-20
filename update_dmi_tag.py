@@ -9,14 +9,15 @@
 #        update_dmi_tag.py --hosts <arquivo> [opcoes]
 #
 # DESCRIPTION: Shim de compatibilidade. A partir da v2.1.2, a logica do
-#              script foi modularizada no pacote update_dmi_tag/ (14
-#              modulos). Este arquivo preserva o comando de execucao
-#              historico, "python3 update_dmi_tag.py [opcoes]" --
-#              delegando para update_dmi_tag.__main__:main.
+#              script foi modularizada no pacote update_dmi_tag/ (16
+#              modulos, incluindo __init__.py e __main__.py). Este
+#              arquivo preserva o comando de execucao historico,
+#              "python3 update_dmi_tag.py [opcoes]" -- delegando para
+#              update_dmi_tag.__main__:main.
 #
 #              Estrutura esperada no diretorio de trabalho:
 #                update_dmi_tag.py        <- este arquivo
-#                update_dmi_tag/          <- pacote (14 modulos + __init__)
+#                update_dmi_tag/          <- pacote (16 modulos)
 #                amidelnx_64               <- binario AMI (modo remoto)
 #                hosts.txt, .ssh_pass, etc.
 #
@@ -34,10 +35,14 @@
 #
 # NOTES: Codificacao US-ASCII nos comentarios e codigo-fonte.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - corrige contagem de modulos desatualizada
+#                        nos comentarios (dizia "14 modulos", o pacote real
+#                        tem 16: 14 funcionais + __init__.py + __main__.py).
+#                        Comentario apenas, sem mudanca de comportamento.
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -69,8 +74,9 @@
 # CREATED: 2026-06-12
 # REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
 #                        pacote. Todo o codigo anterior (3.586 linhas em
-#                        arquivo unico) foi distribuido em 14 modulos
-#                        dentro de update_dmi_tag/. Ver
+#                        arquivo unico) foi distribuido em modulos
+#                        dentro de update_dmi_tag/ (16 ao todo hoje,
+#                        incluindo __init__.py e __main__.py). Ver
 #                        update_dmi_tag/constants.py para o historico
 #                        completo de revisoes (REVISION) anterior a esta.
 # REVISION: 2026-07-06 - v2.1.9 - atualizacao do shim para nova versao de controle.

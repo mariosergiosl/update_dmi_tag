@@ -18,6 +18,20 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - trava nova: quando o Mecanismo 2 falha
+#                        por falta de KMP compativel com o kernel exato do
+#                        host (constants.eh_kmp_incompativel_com_kernel),
+#                        tenta_escrever_tag_remoto retorna
+#                        "BLOQUEADO-KMP-kernel-incompativel" em vez de
+#                        escalar ao Mecanismo 3, mesmo com
+#                        --allow-efi-fallback. Motivo: essa falha e um gap
+#                        de empacotamento (falta gerar/copiar o RPM certo,
+#                        ver rpm/README.md), nao incompatibilidade real de
+#                        hardware; arriscar um reboot nao ajuda em nada e
+#                        ja causou 2 TRAVADO-POS-REBOOT em campo no mesmo
+#                        modelo de placa por esse motivo exato.
+#                        tenta_teste_escrita_remoto ganha o mesmo tratamento
+#                        (retorna o mesmo status em vez de FALHOU-todos).
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -99,7 +113,7 @@
 
 from .constants import (
     MecanismoIndisponivelError, TodosMecanismosFalharam,
-    eh_incompatibilidade_firmware,
+    eh_incompatibilidade_firmware, eh_kmp_incompativel_com_kernel,
 )
 from .logging_utils import gravar_log, gravar_log_remoto
 from .bios_amidelnx import executa_amidelnx_local, executa_amidelnx_remoto
@@ -253,6 +267,25 @@ def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
                  "ambos os mecanismos (amidelnx: {}; amibios: {}).".format(
                      detalhe_amidelnx, detalhe_amibios))
 
+        # Trava: Mecanismo 2 pode ter falhado so por falta de KMP compilado
+        # para o kernel exato do host (ver environment.py:
+        # instala_modulo_remoto e constants.MARCADOR_KMP_KERNEL_
+        # INCOMPATIVEL), nao por o hardware ser de fato incompativel. Nesse
+        # caso o modelo E compativel em principio; reiniciar o host via
+        # Mecanismo 3 nao resolve nada e so arrisca um TRAVADO-POS-REBOOT a
+        # toa (ja confirmado 2x em campo com o mesmo modelo Gigabyte/PERTOSA
+        # H81M-S2PH, ver rpm/README.md). Bloqueia ANTES de checar
+        # --allow-efi-fallback: essa flag nao deve valer para este motivo.
+        if eh_kmp_incompativel_com_kernel(detalhe_amibios):
+            _log("WARNING",
+                 "Mecanismo 2 falhou por falta de KMP compativel com o "
+                 "kernel deste host (nao e incompatibilidade de hardware). "
+                 "Mecanismo 3 (reboot) NAO sera tentado por seguranca, "
+                 "mesmo com --allow-efi-fallback. Gere/adicione o RPM do "
+                 "kernel certo (ver rpm/README.md, projeto OBS "
+                 "home:mariosergiosl:amibios_dmi) e rode novamente.")
+            return "BLOQUEADO-KMP-kernel-incompativel"
+
         if getattr(args, "allow_efi_fallback", False):
             # Import local: boot_efi.py e um modulo experimental, isolado do
             # restante da cascata; so e importado quando a flag e usada.
@@ -305,6 +338,9 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                                    usado como valor de teste quando a
                                    tag atual for virgem (opcional)
     RETURNS: str, "OK-amidelnx", "OK-amibios", "FALHOU-todos",
+             "INCOMPATIVEL-HW", "BLOQUEADO-KMP-kernel-incompativel"
+             (Mecanismo 2 falhou so por falta de KMP para o kernel exato
+             do host, ver constants.eh_kmp_incompativel_com_kernel),
              "RESTORE-FALHOU" (teste gravou com sucesso mas a restauracao do
              valor virgem original falhou, a BIOS deste host permanece com
              o valor de teste, requer correcao manual), "TAG-VIRGEM"
@@ -368,6 +404,13 @@ def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
                  "incompatibilidade de firmware conhecida (amidelnx: {}; "
                  "amibios: {}).".format(detalhe_amidelnx, detalhe_amibios))
             return "INCOMPATIVEL-HW", False
+
+        if eh_kmp_incompativel_com_kernel(detalhe_amibios):
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 2 falhou por falta de KMP "
+                 "compativel com o kernel deste host (ver rpm/README.md); "
+                 "nao e incompatibilidade de hardware.")
+            return "BLOQUEADO-KMP-kernel-incompativel", False
 
         _log("ERROR",
              "[TEST-WRITE] Ambos os mecanismos falharam, modelo "

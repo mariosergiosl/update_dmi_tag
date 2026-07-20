@@ -13,7 +13,7 @@
 #              gravacao bem-sucedida na BIOS (--write), com backup
 #              imutavel (chattr +i, melhor esforco) e rollback em falha.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
 # REVISION: 2026-07-20 - v2.2.8 - corrige bug real de assimetria entre

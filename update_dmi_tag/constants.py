@@ -11,9 +11,19 @@
 #              _detecta_usuario_sessao que e chamada uma vez no import
 #              para popular DEFAULT_SSH_USER.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - adiciona MARCADOR_KMP_KERNEL_INCOMPATIVEL
+#                        e eh_kmp_incompativel_com_kernel: distingue "Mecanismo
+#                        2 falhou por falta de KMP compilado para o kernel
+#                        exato do host" (gap de empacotamento, cobre-se
+#                        gerando o RPM certo) de incompatibilidade real de
+#                        hardware. write_cascade.py usa isso para bloquear
+#                        o Mecanismo 3 (reboot) nesse caso especifico, mesmo
+#                        com --allow-efi-fallback (nao adianta arriscar um
+#                        reboot por uma lacuna que se resolve so com o RPM
+#                        certo, ver rpm/README.md).
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -271,6 +281,27 @@ def eh_incompatibilidade_firmware(detalhe):
     """
     texto = (detalhe or "").lower()
     return any(sinal in texto for sinal in SINAIS_INCOMPATIBILIDADE_HW)
+
+
+# Marcador (nao traduzido, comparado por substring exata) usado por
+# environment.py (instala_modulo_remoto) para sinalizar que o Mecanismo 2
+# falhou porque nenhum RPM de KMP em module_rpm_dir bate com o kernel
+# exato do host, e nao por o hardware/firmware ser incompativel. Ver
+# eh_kmp_incompativel_com_kernel, usado por write_cascade.py.
+MARCADOR_KMP_KERNEL_INCOMPATIVEL = "KMP-KERNEL-MISMATCH"
+
+
+def eh_kmp_incompativel_com_kernel(detalhe):
+    """
+    NAME: eh_kmp_incompativel_com_kernel
+    DESCRIPTION: Verifica se uma mensagem de erro do Mecanismo 2 indica
+                 falta de RPM de KMP compativel com o kernel exato do
+                 host (ver MARCADOR_KMP_KERNEL_INCOMPATIVEL), em vez de
+                 incompatibilidade real de hardware/firmware.
+    PARAMETER: detalhe - str, mensagem de erro/detalhe do Mecanismo 2
+    RETURNS: bool, True se a falha foi por falta de KMP para o kernel
+    """
+    return MARCADOR_KMP_KERNEL_INCOMPATIVEL in (detalhe or "")
 
 
 # --- SSH ---

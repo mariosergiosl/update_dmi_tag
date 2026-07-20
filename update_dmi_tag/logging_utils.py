@@ -11,7 +11,7 @@
 #              prefixa cada linha do log local consolidado com [IP] e
 #              executa o comando de log no host remoto via SSH.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para

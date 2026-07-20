@@ -16,14 +16,23 @@
 #              processa_host_remoto com mocks) e os retornos da cascata
 #              de escrita. Nenhuma dependencia alem da stdlib.
 #
-# AUTHOR: Mario Luz
+# AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
 # CREATED: 2026-07-18
-# REVISION: ---
+# REVISION: 2026-07-20 - v2.2.8 - novos casos em TestCascataUnidade para a
+#                        trava BLOQUEADO-KMP-kernel-incompativel (nao
+#                        escalar ao Mecanismo 3 quando o Mecanismo 2 falha
+#                        so por falta de KMP para o kernel do host, ver
+#                        write_cascade.py e constants.py). (Uma trava
+#                        blanket separada para "qualquer SLES 12" foi
+#                        cogitada e revertida na mesma sessao: descoberto
+#                        KMP funcional para SLES 12 SP5, a trava generica
+#                        acima ja cobre o caso real sem OS.)
 #
 # =======================================================================
 
+import hashlib
 import os
 import sys
 import tempfile
@@ -47,6 +56,7 @@ from update_dmi_tag import summary as summary_mod  # noqa: E402
 from update_dmi_tag import host_processor as hp  # noqa: E402
 from update_dmi_tag import write_cascade as wc  # noqa: E402
 from update_dmi_tag import bbconfig as bbconfig_mod  # noqa: E402
+from update_dmi_tag import environment as env  # noqa: E402
 
 
 class TestDVModulo11(unittest.TestCase):
@@ -282,6 +292,27 @@ class TestSummary(unittest.TestCase):
         desc = summary_mod._descricao_resultado("OK-ja-correto")
         self.assertIn("nenhum mecanismo executado", desc)
 
+    def test_te_testado_contabiliza_incompativel_e_bloqueado(self):
+        """Bug real (2026-07-20): te_testado nao contava
+        INCOMPATIVEL-HW nem BLOQUEADO-* vindos de teste_escrita
+        (tenta_teste_escrita_remoto pode retornar ambos), subestimando
+        o 'Total testado'. Confirma que os 2 hosts abaixo entram na
+        conta (4 no total, nao 2)."""
+        registros = []
+        for ip, te in [
+            ("10.0.1.1", "OK-amidelnx"),
+            ("10.0.1.2", "FALHOU-todos"),
+            ("10.0.1.3", "INCOMPATIVEL-HW"),
+            ("10.0.1.4", "BLOQUEADO-KMP-kernel-incompativel"),
+        ]:
+            r = _registro(ip, "DRY-RUN")
+            r["teste_escrita"] = te
+            registros.append(r)
+        saida = self._roda(registros)
+        self.assertIn("Incompativel (INCOMPATIVEL-HW):   1", saida)
+        self.assertIn("Bloqueado (BLOQUEADO-*)    :   1", saida)
+        self.assertIn("Total testado              :   4", saida)
+
 
 class TestTravaGlobalIntegracao(unittest.TestCase):
     """Integracao com mocks: processa_host_remoto de ponta a ponta,
@@ -441,6 +472,153 @@ class TestCascataUnidade(unittest.TestCase):
         """Sem --write a cascata retorna DRY-RUN apos o Mecanismo 1."""
         r = self._roda((True, ""), (True, ""), self._args(write=False))
         self.assertEqual(r, "DRY-RUN")
+
+    def test_kmp_incompativel_kernel_nao_escala_para_efi(self):
+        """Trava v2.2.8: falta de KMP para o kernel do host (marcador de
+        environment.instala_modulo_remoto) bloqueia o Mecanismo 3 mesmo
+        com --allow-efi-fallback ativo (nao e incompatibilidade de
+        hardware, so falta o RPM certo, ver rpm/README.md)."""
+        r = self._roda(
+            (False, "generico, amidelnx indisponivel"),
+            (False, "KMP-KERNEL-MISMATCH: host roda o kernel "
+                    "'6.4.0-150600.21-default', mas nenhum RPM compativel."),
+            self._args(allow_efi=True))
+        self.assertEqual(r, "BLOQUEADO-KMP-kernel-incompativel")
+
+    def test_kmp_incompativel_kernel_sem_efi_fallback(self):
+        """Mesma trava sem --allow-efi-fallback: resultado identico (a
+        trava independe da flag)."""
+        r = self._roda(
+            (False, "generico"),
+            (False, "KMP-KERNEL-MISMATCH: nenhum RPM compativel."),
+            self._args(allow_efi=False))
+        self.assertEqual(r, "BLOQUEADO-KMP-kernel-incompativel")
+
+
+class TestInstalaModuloRemotoKernelMatching(unittest.TestCase):
+    """Regressao para bug real (2026-07-20): instala_modulo_remoto
+    comparava o osrelease completo (formato 'versao-build-flavor', ex.
+    '5.3.18-22-default') contra o nome do arquivo (formato
+    'amibios-dmi-kmp-flavor-versao-build.rpm', flavor ANTES da versao).
+    A comparacao por substring direta nunca batia com nenhum candidato
+    real, entao TODO host caia em KMP-KERNEL-MISMATCH mesmo com o RPM
+    certo presente na pasta -- regressao total da instalacao automatica
+    do KMP. Os testes de TestCascataUnidade nao pegavam isso porque
+    mockam executa_amibios_remoto (quem chama instala_modulo_remoto),
+    nunca exercitando o matching de verdade. Este teste roda
+    instala_modulo_remoto de verdade (arquivos reais em disco), so
+    ssh_run/scp/verificacao de pacote sao mockados."""
+
+    def _prepara_rpms(self, tmpdir):
+        nomes = [
+            "amibios-dmi-kmp-default-5.3.18-22.rpm",
+            "amibios-dmi-kmp-default-6.4.0-150700.51.rpm",
+            "amibios-dmi-kmp-default-4.12.14-120.rpm",
+        ]
+        for n in nomes:
+            with open(os.path.join(tmpdir, n), "wb") as f:
+                f.write(b"conteudo-fake-rpm")
+        return nomes
+
+    def test_escolhe_kmp_certo_para_kernel_real(self):
+        """Kernel osrelease real de campo ('5.3.18-22-default') deve
+        escolher o candidato certo, nao 'o ultimo em ordem alfabetica'
+        (que seria o de 6.4.0-150700.51)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._prepara_rpms(tmpdir)
+            caminho_certo = os.path.join(
+                tmpdir, "amibios-dmi-kmp-default-5.3.18-22.rpm")
+            with open(caminho_certo, "rb") as f:
+                sha_certo = hashlib.sha256(f.read()).hexdigest()
+
+            def _fake_ssh_run(ip, ssh_user, cmd, timeout=10):
+                if "osrelease" in cmd:
+                    return 0, "5.3.18-22-default\n", ""
+                if "sha256sum" in cmd:
+                    return 0, sha_certo, ""
+                return 0, "", ""
+
+            with mock.patch.object(env, "ssh_run",
+                                   side_effect=_fake_ssh_run), \
+                 mock.patch.object(env, "_scp_arquivo_com_erro",
+                                   return_value=(True, "")) as m_scp, \
+                 mock.patch.object(env, "verifica_pacote_rpm_remoto",
+                                   return_value=True), \
+                 mock.patch.object(env, "gravar_log_remoto"):
+                sucesso, detalhe = env.instala_modulo_remoto(
+                    "192.0.2.1", "u", "sudo", tmpdir,
+                    "amibios-dmi-kmp-default", "amibios-dmi",
+                    "", False, False, "")
+
+            self.assertTrue(sucesso, detalhe)
+            caminho_copiado = m_scp.call_args[0][2]
+            self.assertIn("5.3.18-22", os.path.basename(caminho_copiado))
+
+    def test_nenhum_kmp_bate_retorna_marcador(self):
+        """Kernel sem candidato compativel na pasta deve retornar o
+        marcador de kernel incompativel, sem tentar scp/zypper."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._prepara_rpms(tmpdir)
+
+            def _fake_ssh_run(ip, ssh_user, cmd, timeout=10):
+                if "osrelease" in cmd:
+                    return 0, "9.9.9-1-default\n", ""
+                return 0, "", ""
+
+            with mock.patch.object(env, "ssh_run",
+                                   side_effect=_fake_ssh_run), \
+                 mock.patch.object(env, "_scp_arquivo_com_erro") as m_scp, \
+                 mock.patch.object(env, "gravar_log_remoto"):
+                sucesso, detalhe = env.instala_modulo_remoto(
+                    "192.0.2.1", "u", "sudo", tmpdir,
+                    "amibios-dmi-kmp-default", "amibios-dmi",
+                    "", False, False, "")
+
+            self.assertFalse(sucesso)
+            self.assertIn("KMP-KERNEL-MISMATCH", detalhe)
+            m_scp.assert_not_called()
+
+    def test_nao_cruza_versoes_com_prefixo_comum(self):
+        """Fragilidade latente apontada em revisao (2026-07-20): o
+        matching antigo era por substring ('kernel_base in nome'), que
+        cruzaria erroneamente kernel '5.3.18-22' com um arquivo
+        '...-5.3.18-220.rpm' (prefixo em comum). Comparacao agora e por
+        IGUALDADE do nome completo do arquivo, entao so o candidato
+        exato deve ser escolhido, mesmo com um 'quase-igual' na pasta."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nomes = [
+                "amibios-dmi-kmp-default-5.3.18-22.rpm",
+                "amibios-dmi-kmp-default-5.3.18-220.rpm",
+            ]
+            for n in nomes:
+                with open(os.path.join(tmpdir, n), "wb") as f:
+                    f.write(b"fake")
+            caminho_certo = os.path.join(tmpdir, nomes[0])
+            with open(caminho_certo, "rb") as f:
+                sha_certo = hashlib.sha256(f.read()).hexdigest()
+
+            def _fake_ssh_run(ip, ssh_user, cmd, timeout=10):
+                if "osrelease" in cmd:
+                    return 0, "5.3.18-22-default\n", ""
+                if "sha256sum" in cmd:
+                    return 0, sha_certo, ""
+                return 0, "", ""
+
+            with mock.patch.object(env, "ssh_run",
+                                   side_effect=_fake_ssh_run), \
+                 mock.patch.object(env, "_scp_arquivo_com_erro",
+                                   return_value=(True, "")) as m_scp, \
+                 mock.patch.object(env, "verifica_pacote_rpm_remoto",
+                                   return_value=True), \
+                 mock.patch.object(env, "gravar_log_remoto"):
+                sucesso, detalhe = env.instala_modulo_remoto(
+                    "192.0.2.1", "u", "sudo", tmpdir,
+                    "amibios-dmi-kmp-default", "amibios-dmi",
+                    "", False, False, "")
+
+            self.assertTrue(sucesso, detalhe)
+            caminho_copiado = m_scp.call_args[0][2]
+            self.assertEqual(os.path.basename(caminho_copiado), nomes[0])
 
 
 class TestAvisoAllowEfiFallback(unittest.TestCase):
