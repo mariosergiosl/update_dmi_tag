@@ -48,11 +48,22 @@ da DMI Asset Tag via boot temporário em UEFI Shell. Ver seção 17 do
 ## Status de validação
 
 Validado em VM real com firmware EFI (SLES 15.6, VirtualBox/OVMF) em
-2026-07-09, ver `Docs_Test_boot/README.md` para o registro completo dos
-testes. O `bootx64.efi` novo (25H1) funciona corretamente como shell; a
-checagem de segurança e o fluxo de escrita/reboot/recuperação foram
-validados, incluindo a correção do bug no `startup.nsh` e do risco de
-loop de reboot infinito. A gravação real da tag via `AMIDEEFIx64.EFI`
-ainda depende de teste em hardware AMI real (a firmware de VM não é
-reconhecida pelo utilitário, ver "Platform identification failed" no
-registro de testes).
+2026-07-09 e em hardware real (2 notebooks Dell, Precision 5520 e
+Latitude 5320) em 2026-07-14, ver `Docs_Test_boot/README.md` para o
+registro completo dos testes. O `bootx64.efi` novo (25H1) funciona
+corretamente como shell; a checagem de segurança e o fluxo de
+escrita/reboot/recuperação foram validados, incluindo a correção do bug
+no `startup.nsh` e do risco de loop de reboot infinito.
+
+A gravação real da tag via `AMIDEEFIx64.EFI` foi testada em hardware AMI
+real (a firmware de VM não é reconhecida pelo utilitário, ver "Platform
+identification failed" no registro de testes com VM): nos dois notebooks
+Dell, a firmware rejeitou a gravação (`Fail to initialize SMBIOS` /
+`DMI Data write failed`), a mesma assinatura de incompatibilidade já
+observada nos Mecanismos 1 e 2 nesses modelos (ver seção 11.4 do
+`manual_operacao.md`). Ou seja, o fluxo do Mecanismo 3 em si (checagem,
+boot, escrita, confirmação, limpeza) está validado ponta a ponta em
+hardware real; o que falta é encontrar um modelo onde a interface AMI
+SMI/DMI seja de fato suportada, para confirmar uma gravação bem-sucedida
+via `AMIDEEFIx64.EFI` (e não apenas o fluxo de infraestrutura em torno
+dele).

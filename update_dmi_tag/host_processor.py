@@ -16,6 +16,11 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - documenta (sem remover) que o campo
+#                        "mecanismo" do registro de retorno e morto:
+#                        inicializado como "N/D" mas nunca atualizado;
+#                        summary.py nao le essa chave. Comentario apenas,
+#                        sem mudanca de comportamento.
 # REVISION: 2026-07-17 - v2.2.8 - trava global: antes de acionar a cascata
 #                        de escrita, compara a tag ja lida na BIOS
 #                        (tag_antes) com a tag esperada. Se forem iguais,
@@ -181,6 +186,12 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         "bem_conf":        "N/D",
         "bem_usado":       "N/D",
         "tag_depois":      "N/D",
+        # "mecanismo" e um campo morto: inicializado aqui e em
+        # _registro_descartado, mas nunca atualizado ao longo desta funcao
+        # (qual mecanismo gravou ja fica implicito no proprio "resultado",
+        # ex. OK-amidelnx/OK-amibios/OK-efiboot). summary.py nao le esta
+        # chave. Mantido por retrocompatibilidade do formato do dict; nao
+        # remover sem checar se algum consumidor externo depende dele.
         "mecanismo":       "N/D",
         "resultado":       "INACESSIVEL",
         "bbconfig_sync":   "N/A",
@@ -566,7 +577,7 @@ def _registro_descartado(ip):
         "bem_conf":        "N/D",
         "bem_usado":       "N/D",
         "tag_depois":      "N/D",
-        "mecanismo":       "N/D",
+        "mecanismo":       "N/D",  # campo morto, ver comentario em processa_host_remoto
         "resultado":       "INACESSIVEL",
         "bbconfig_sync":   "N/A",
         "bbconfig_backup": "",

@@ -46,6 +46,7 @@ from update_dmi_tag.constants import eh_incompatibilidade_firmware  # noqa: E402
 from update_dmi_tag import summary as summary_mod  # noqa: E402
 from update_dmi_tag import host_processor as hp  # noqa: E402
 from update_dmi_tag import write_cascade as wc  # noqa: E402
+from update_dmi_tag import bbconfig as bbconfig_mod  # noqa: E402
 
 
 class TestDVModulo11(unittest.TestCase):
@@ -440,6 +441,122 @@ class TestCascataUnidade(unittest.TestCase):
         """Sem --write a cascata retorna DRY-RUN apos o Mecanismo 1."""
         r = self._roda((True, ""), (True, ""), self._args(write=False))
         self.assertEqual(r, "DRY-RUN")
+
+
+class TestAvisoAllowEfiFallback(unittest.TestCase):
+    """Regressao para o bug real da v2.2.8 (revisao 2026-07-20): o aviso
+    interativo de --allow-efi-fallback ainda citava 'Mecanismo 4', apesar
+    da renumeracao para 'Mecanismo 3' na v2.1.14. Guarda de texto, nao de
+    comportamento: le o fonte de __main__.py e confere a string exibida
+    ao operador antes da confirmacao de reboot fisico."""
+
+    def test_aviso_cita_mecanismo_3_nao_4(self):
+        caminho = os.path.join(BASE, "update_dmi_tag", "__main__.py")
+        with open(caminho, encoding="utf-8") as f:
+            fonte = f.read()
+        linha_correta = (
+            '"3 (os 2 mecanismos diretos, amidelnx_64 e amibios_dmi, '
+            'ja tiverem "')
+        linha_com_bug = (
+            '"4 (os 2 mecanismos diretos, amidelnx_64 e amibios_dmi, '
+            'ja tiverem "')
+        self.assertIn(linha_correta, fonte)
+        self.assertNotIn(linha_com_bug, fonte)
+
+
+class TestSincronizaBbconfigLocalChattrOriginal(unittest.TestCase):
+    """Regressao para o bug real da v2.2.8 (revisao 2026-07-20):
+    sincroniza_bbconfig_local nao tratava chattr +i no arquivo ORIGINAL
+    (so no backup), ao contrario de sincroniza_bbconfig_remoto. Confere
+    que, com o original imutavel, chattr -i roda antes do sed e chattr +i
+    roda depois (restauracao), e que sem imutabilidade nenhum dos dois
+    e chamado."""
+
+    def _prepara_arquivo(self, valor_final):
+        f = tempfile.NamedTemporaryFile(
+            "w", suffix=".conf", delete=False, encoding="utf-8")
+        f.write("BEM_NUMERO={}\n".format(valor_final))
+        f.close()
+        return f.name
+
+    @staticmethod
+    def _eh(cmd, *esperado):
+        """True se cmd (lista) comeca exatamente com os tokens esperados
+        e tem o mesmo comprimento (evita falso-positivo por slicing)."""
+        return len(cmd) == len(esperado) and list(cmd) == list(esperado)
+
+    def test_chattr_removido_e_restaurado_quando_original_imutavel(self):
+        caminho = self._prepara_arquivo("74171618303986")
+        try:
+            def fake_run(cmd, **kw):
+                if len(cmd) == 5 and cmd[:3] == ["sudo", "cp", "-p"]:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if len(cmd) == 4 and cmd[:3] == ["sudo", "chattr", "+i"] and cmd[3] != caminho:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if self._eh(cmd, "lsattr", caminho):
+                    return mock.Mock(
+                        returncode=0,
+                        stdout="----i---------e------- {}".format(caminho),
+                        stderr="")
+                if self._eh(cmd, "sudo", "chattr", "-i", caminho):
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if len(cmd) == 5 and cmd[:3] == ["sudo", "sed", "-i"]:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if self._eh(cmd, "sudo", "chattr", "+i", caminho):
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                raise AssertionError("comando nao previsto pelo teste: {}".format(cmd))
+
+            with mock.patch.object(bbconfig_mod.subprocess, "run",
+                                   side_effect=fake_run) as m:
+                resultado = bbconfig_mod.sincroniza_bbconfig_local(
+                    caminho, "BEM_NUMERO", "PENDENTE", "74171618303986",
+                    "", False, True)
+
+            self.assertEqual(resultado["motivo"], "OK")
+            comandos = [list(c.args[0]) for c in m.call_args_list]
+            self.assertIn(["sudo", "chattr", "-i", caminho], comandos)
+            self.assertIn(["sudo", "chattr", "+i", caminho], comandos)
+            idx_remove = comandos.index(["sudo", "chattr", "-i", caminho])
+            idx_sed = next(i for i, c in enumerate(comandos)
+                          if len(c) == 5 and c[:3] == ["sudo", "sed", "-i"])
+            idx_restaura = comandos.index(["sudo", "chattr", "+i", caminho])
+            self.assertLess(idx_remove, idx_sed,
+                            "chattr -i deve rodar ANTES do sed")
+            self.assertLess(idx_sed, idx_restaura,
+                            "chattr +i deve rodar DEPOIS do sed")
+        finally:
+            os.remove(caminho)
+
+    def test_chattr_original_nao_tocado_quando_nao_imutavel(self):
+        caminho = self._prepara_arquivo("74171618303986")
+        try:
+            def fake_run(cmd, **kw):
+                if len(cmd) == 5 and cmd[:3] == ["sudo", "cp", "-p"]:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if len(cmd) == 4 and cmd[:3] == ["sudo", "chattr", "+i"] and cmd[3] != caminho:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                if self._eh(cmd, "lsattr", caminho):
+                    # sem o "i" na saida: arquivo NAO imutavel
+                    return mock.Mock(
+                        returncode=0,
+                        stdout="-------------e------- {}".format(caminho),
+                        stderr="")
+                if len(cmd) == 5 and cmd[:3] == ["sudo", "sed", "-i"]:
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                raise AssertionError("comando nao previsto pelo teste: {}".format(cmd))
+
+            with mock.patch.object(bbconfig_mod.subprocess, "run",
+                                   side_effect=fake_run) as m:
+                resultado = bbconfig_mod.sincroniza_bbconfig_local(
+                    caminho, "BEM_NUMERO", "PENDENTE", "74171618303986",
+                    "", False, True)
+
+            self.assertEqual(resultado["motivo"], "OK")
+            comandos = [list(c.args[0]) for c in m.call_args_list]
+            self.assertNotIn(["sudo", "chattr", "-i", caminho], comandos)
+            self.assertNotIn(["sudo", "chattr", "+i", caminho], comandos)
+        finally:
+            os.remove(caminho)
 
 
 if __name__ == "__main__":

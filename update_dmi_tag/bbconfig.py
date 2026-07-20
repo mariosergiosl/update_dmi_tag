@@ -16,6 +16,17 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - corrige bug real de assimetria entre
+#                        sincroniza_bbconfig_remoto e
+#                        sincroniza_bbconfig_local: a versao remota ja
+#                        detectava e removia temporariamente o chattr +i
+#                        do arquivo ORIGINAL (nao so do backup) antes do
+#                        sed -i, restaurando depois; a versao local so
+#                        tratava chattr +i no backup. Em BBconfig.conf
+#                        local marcado como imutavel (automacoes tipo
+#                        Puppet/BigFix), o sed -i falharia sem tratamento
+#                        equivalente. Replicada a mesma logica (lsattr +
+#                        chattr -i/+i local via subprocess).
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -409,10 +420,12 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
     NAME: sincroniza_bbconfig_local
     DESCRIPTION: Equivalente local (modo standalone) de
                  sincroniza_bbconfig_remoto. Mesma logica de backup com
-                 timestamp + usuario local, chattr +i no backup, sed -i
-                 no original e confirmacao via grep, com rollback em
-                 falha. Todos os comandos sao executados localmente via
-                 subprocess com sudo.
+                 timestamp + usuario local, chattr +i no backup, deteccao
+                 e remocao temporaria de chattr +i no arquivo original
+                 (se imutavel), sed -i no original e confirmacao via
+                 leitura direta do arquivo, com rollback em falha. Todos
+                 os comandos sao executados localmente via subprocess
+                 com sudo.
     PARAMETER: caminho_config    - caminho do arquivo de configuracao
                nome_var          - nome da variavel (ex: BEM_NUMERO)
                bem_conf          - valor atual no arquivo
@@ -466,8 +479,27 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
              "chattr +i falhou em {} (sistema de arquivos pode nao suportar): {}".format(
                  backup_path, (err_chattr or "").strip()))
 
+    # Verifica se o arquivo original tem chattr +i e remove antes de editar
+    # (mesma logica de sincroniza_bbconfig_remoto, passo 5.5). Em hosts com
+    # BBconfig.conf marcado como imutavel por automacoes (ex: Puppet,
+    # BigFix), o sed -i falharia silenciosamente sem este passo.
+    rc_lsattr, out_lsattr, _ = _run(["lsattr", caminho_config], timeout=10)
+    primeira_linha_lsattr = out_lsattr.splitlines()[0] if out_lsattr.strip() else ""
+    original_imutavel = (rc_lsattr == 0 and bool(primeira_linha_lsattr)
+                        and "i" in primeira_linha_lsattr.split()[0])
+    if original_imutavel:
+        _log("WARNING",
+             "BBconfig.conf tem chattr +i (imutavel). Removendo temporariamente "
+             "para sincronizacao.")
+        _run(["sudo", "chattr", "-i", caminho_config], timeout=10)
+
     sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
     rc_sed, _, err_sed = _run(["sudo", "sed", "-i", sed_expr, caminho_config])
+
+    # Se o arquivo era imutavel, restaura o atributo independente do resultado
+    if original_imutavel:
+        _run(["sudo", "chattr", "+i", caminho_config], timeout=10)
+        _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
 
     def _rollback_local(motivo_base):
         if chattr_ok:

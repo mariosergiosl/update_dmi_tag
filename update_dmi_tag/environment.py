@@ -18,6 +18,12 @@
 # AUTHOR: Mario Luz
 # COMPANY: SUSE
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - _limpa_rpms_copiados passa a logar
+#                        WARNING quando o "rm -f" remoto falha (antes o
+#                        retorno de ssh_run era descartado em silencio;
+#                        RPMs orfaos podiam se acumular num host que
+#                        ficasse instavel entre a instalacao e a limpeza,
+#                        sem nenhum rastro no log).
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -727,12 +733,21 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
         """Remove do home do usuario SSH os .rpm que copiamos (em qualquer
         desfecho, sucesso ou falha), para nao deixar arquivos orfaos
         acumulando entre execucoes. rm -f e seguro mesmo para arquivo que
-        nao chegou a ser copiado."""
+        nao chegou a ser copiado. Melhor esforco: falha aqui nao aborta o
+        fluxo, mas agora fica visivel no log (antes era descartada em
+        silencio, dificultando saber por que RPMs orfaos se acumulavam
+        num host que ficou instavel entre a instalacao e a limpeza)."""
         alvos = " ".join(
             "~/{}".format(shlex.quote(os.path.basename(c)))
             for c in arquivos_para_copiar)
         if alvos:
-            ssh_run(ip, ssh_user, "rm -f {}".format(alvos), timeout=15)
+            rc_limpa, _, err_limpa = ssh_run(
+                ip, ssh_user, "rm -f {}".format(alvos), timeout=15)
+            if rc_limpa != 0:
+                _log("WARNING",
+                     "Falha ao limpar RPMs copiados ({}): {}. Arquivos podem "
+                     "ter ficado orfaos no home do usuario SSH.".format(
+                         alvos, (err_limpa or "").strip() or "sem detalhe"))
 
     caminhos_remotos = []
     nomes_arquivos = []

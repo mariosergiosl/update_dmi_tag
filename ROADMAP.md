@@ -2,7 +2,11 @@
 
 ## v2.2, Execução paralela (`--parallel N`)
 
-Status: planejado (especificação). O código atual (v2.1.14) é sequencial.
+Status: **concluído**. Implementado e validado em campo (`--parallel 3`
+contra 3 hosts heterogêneos reais) desde a v2.2.0. Este documento é
+mantido como registro histórico da especificação original; o
+comportamento real pode ser conferido no código (`__main__.py`,
+`_processa_hosts_paralelo`) e na seção 8.6 do `manual_operacao.md`.
 
 ### Motivação
 

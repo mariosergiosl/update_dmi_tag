@@ -6,17 +6,18 @@ do `.spec` e do `_service` foi baseado no projeto irmao
 autor), so como referencia de estilo; nao ha nenhuma relacao funcional
 entre os dois pacotes.
 
-**Status atual: nada disso foi publicado no OBS ainda.** Os arquivos
-abaixo existem so aqui no repositorio git. Criar o projeto no OBS
-(`build.opensuse.org`) e um passo manual, feito por voce diretamente
-no site (ou via `osc`), ver secao "Publicar no OBS" abaixo.
+**Status atual: publicado no OBS.** Projeto `home:mariosergiosl`, pacote
+`update_dmi_tag`, builds `succeeded` em dois repositorios
+(`openSUSE_Leap_15.6` e `15.6`, este ultimo contra `SUSE:SLE-15-SP6:GA`).
+Ver secao "Publicar/atualizar no OBS" abaixo para o fluxo de release.
 
 ## Arquivos
 
 - `update_dmi_tag.spec` (na raiz do projeto, exigencia do OBS): spec
   do RPM.
 - `_service` (na raiz do projeto): servico do OBS (`tar_scm`) que
-  busca o codigo direto do GitHub, na tag indicada (`v2.1.13`).
+  busca o codigo direto do GitHub, na tag indicada no campo
+  `<revision>` (atualizada a cada release; hoje aponta para `v2.2.8`).
 - `packaging/update_dmi_tag-wrapper.sh`: instalado como
   `/usr/bin/update_dmi_tag`, entra em `/opt/update_dmi_tag` antes de
   chamar o script (ver comentario no proprio arquivo).
@@ -58,35 +59,50 @@ Como todos os operadores rodam a partir do mesmo `/opt/update_dmi_tag`:
   muitos operadores, o modelo natural continua sendo cada um rodar da
   propria pasta de trabalho.
 
-## Build local (teste antes de publicar no OBS)
+## Build local (teste antes de publicar/atualizar no OBS)
 
 ```bash
-# Cria o tarball fonte a partir do HEAD atual
-git archive --format=tar.gz --prefix=update_dmi_tag-2.1.13/ \
-  -o /tmp/update_dmi_tag-2.1.13.tar.gz HEAD
+# Cria o tarball fonte a partir da tag do release
+git archive --format=tar.gz --prefix=update_dmi_tag-2.2.8/ \
+  -o /tmp/update_dmi_tag-2.2.8.tar.gz v2.2.8
 
 # Build com osc (requer osc instalado e configurado) ou rpmbuild direto:
-rpmbuild -ta /tmp/update_dmi_tag-2.1.13.tar.gz
+rpmbuild -ta /tmp/update_dmi_tag-2.2.8.tar.gz
 ```
 
-## Publicar no OBS (Open Build Service): passo a passo manual, ainda pendente
+Recomendado antes de qualquer release: validar o build localmente (como
+acima) antes de disparar o OBS, especialmente o `%changelog` do
+`update_dmi_tag.spec` (RPM valida o dia da semana de cada data; uma data
+errada derruba o build com "bogus date in %changelog").
 
-1. Fazer login em [build.opensuse.org](https://build.opensuse.org) com
-   a sua conta e criar um projeto novo chamado
-   `home:mariosergiosl:update_dmi_tag` (nome sugerido, livre para
-   trocar). Isso e feito direto na interface web do OBS, eu nao tenho
-   acesso a sua conta para fazer isso por voce.
-2. Dentro desse projeto, criar o pacote `update_dmi_tag`.
-3. Fazer upload de `update_dmi_tag.spec` e `_service` (ou usar
-   `osc service runall` para o OBS buscar do GitHub automaticamente
-   via `_service`).
-4. Cada nova tag `vX.Y.Z` no GitHub, seguida de um `osc service
-   remoterun` (ou webhook equivalente), gera uma nova build.
+## Publicar/atualizar no OBS (Open Build Service)
+
+Projeto e pacote ja existem (`home:mariosergiosl` / `update_dmi_tag`,
+cliente `osc` usado: venv em `D:\Ferramentas\osc` no Windows). Fluxo de
+release para uma nova versao:
+
+1. Criar e enviar a tag `vX.Y.Z` no GitHub (`git tag -a vX.Y.Z -m "..."`,
+   `git push origin vX.Y.Z`).
+2. Atualizar o campo `<revision>` do `_service` (na raiz do projeto) para
+   a nova tag e enviar ao OBS:
+   `osc api -T _service /source/home:mariosergiosl/update_dmi_tag/_service`
+3. Disparar o servico remoto: `osc service remoterun home:mariosergiosl update_dmi_tag`
+4. Conferir o resultado: `osc results home:mariosergiosl update_dmi_tag`
+   (esperado: `succeeded` nos dois repositorios).
+
+Repositorios configurados: `openSUSE_Leap_15.6` (contra
+`openSUSE:Leap:15.6`) e `15.6` (contra `SUSE:SLE-15-SP6:GA`), ambos
+x86_64/noarch. Pagina do pacote:
+https://build.opensuse.org/package/show/home:mariosergiosl/update_dmi_tag
 
 Depois de publicado, o operador instala/atualiza via:
 
 ```bash
-zypper addrepo https://download.opensuse.org/repositories/home:/mariosergiosl:/update_dmi_tag/<distro>/home:mariosergiosl:update_dmi_tag.repo
+# openSUSE Leap 15.6
+zypper addrepo https://download.opensuse.org/repositories/home:/mariosergiosl/openSUSE_Leap_15.6/home:mariosergiosl.repo
+# SUSE Linux Enterprise 15 SP6
+zypper addrepo https://download.opensuse.org/repositories/home:/mariosergiosl/15.6/home:mariosergiosl.repo
+
 zypper refresh
 zypper install update_dmi_tag
 ```

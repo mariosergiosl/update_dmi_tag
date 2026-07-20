@@ -31,6 +31,13 @@
 # COMPANY: SUSE
 #
 # VERSION: 2.2.8
+# REVISION: 2026-07-20 - v2.2.8 - corrige aviso de --allow-efi-fallback
+#                        que ainda citava "Mecanismo 4" (deveria ser
+#                        "Mecanismo 3" desde a renumeracao da v2.1.14).
+#                        Bug real: o texto e mostrado ao operador no
+#                        momento de confirmar um reboot fisico em
+#                        producao, podia causar confusao sobre qual
+#                        mecanismo estava prestes a ser acionado.
 # REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -667,7 +674,7 @@ def main():
         sys.stderr.write(
             "AVISO: --allow-efi-fallback esta ativo. Isso vai REINICIAR "
             "fisicamente os equipamentos da lista que precisarem do Mecanismo "
-            "4 (os 2 mecanismos diretos, amidelnx_64 e amibios_dmi, ja tiverem "
+            "3 (os 2 mecanismos diretos, amidelnx_64 e amibios_dmi, ja tiverem "
             "falhado numa gravacao real com -w). Isso vai reiniciar as maquinas "
             "da lista. Voce tem certeza? [s/N]: ")
         resposta = input().strip().lower()
