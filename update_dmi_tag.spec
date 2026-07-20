@@ -58,12 +58,14 @@ cp -a efi_boot %{buildroot}/opt/%{name}/
 # automatica do Mecanismo 2 (environment.py: instala_modulo_remoto).
 cp -a rpm %{buildroot}/opt/%{name}/
 
-# Documentacao, licenca e exemplos que o operador consulta junto do codigo
-cp -a manual_operacao.md manual_operacao.pdf README.md LICENSE.md ErrCode.txt \
-    survey_asset_tag.bash bb_repo.conf.example %{buildroot}/opt/%{name}/
-
-# Imagens de marca (logo/banner) referenciadas pelo manual_operacao.md
-cp -a assets %{buildroot}/opt/%{name}/
+# Licenca e exemplos que o operador consulta junto do codigo. NAO inclui
+# manual_operacao.md/.pdf, bb_repo.conf.example nem assets/ (2026-07-20):
+# esses saem do rastreamento publico do Git por seguranca (ver .gitignore),
+# entao nao existem na tarball buscada do GitHub pelo _service/tar_scm.
+# Distribuidos apenas pelo zip interno (update_dmi_tag-vX.Y.Z-minimal.zip),
+# nunca pelo RPM publico.
+cp -a README.md LICENSE.md ErrCode.txt survey_asset_tag.bash \
+    %{buildroot}/opt/%{name}/
 
 # Limpeza de artefatos de desenvolvimento que nao devem ir no pacote
 find %{buildroot}/opt/%{name} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
@@ -88,6 +90,19 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Mon Jul 20 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.8-0
+- Revisao de codigo: corrige mensagem de --allow-efi-fallback que ainda
+  citava "Mecanismo 4"; sincroniza_bbconfig_local passa a tratar chattr
+  +i no arquivo original (nao so no backup), corrigindo assimetria com
+  a versao remota; log de WARNING quando a limpeza de RPMs orfaos
+  falha; documenta (sem remover) o campo morto "mecanismo" no registro.
+- Documentacao: README/ROADMAP/packaging atualizados (versao, status
+  de --parallel e do empacotamento OBS); corrige claim desatualizada em
+  efi_boot/dmi-atm/README.md; 3 diagramas novos (execucao paralela,
+  mapa de resultados, topologia de rede).
+- Seguranca: manual_operacao.md/.pdf, bb_repo.conf.example e assets/
+  saem do pacote RPM publico (nao sao mais rastreados no Git publico,
+  ver .gitignore); continuam distribuidos pelo zip interno.
 * Fri Jul 17 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.8-0
 - Trava global de seguranca: se a tag ja lida na BIOS (tag_antes) for
   igual a esperada, nenhum mecanismo e executado (sem escrita, sem
