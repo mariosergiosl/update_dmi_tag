@@ -1,0 +1,467 @@
+# -*- coding: utf-8 -*-
+
+# =======================================================================
+#
+# FILE: write_cascade.py
+#
+# DESCRIPTION: Orquestra a cascata de mecanismos de gravacao do DMI
+#              Asset Tag: tenta Mecanismo 1 (amidelnx_64), e em falha
+#              ou indisponibilidade cai para o Mecanismo 2 (amibios_dmi
+#              via sysfs). tenta_escrever_tag_local e usada no modo
+#              standalone; tenta_escrever_tag_remoto no modo remoto.
+#              Ambas retornam uma string descritiva: "OK-amidelnx",
+#              "OK-amibios", "DRY-RUN" ou "FALHOU-todos".
+#              tenta_teste_escrita_remoto executa um rewrite no-op
+#              (regrava o valor ja presente na BIOS) para validar a
+#              capacidade de escrita de cada modelo sem alterar nada.
+#
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+# VERSION: 2.2.9
+# REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-20 - v2.2.8 - trava nova: quando o Mecanismo 2 falha
+#                        por falta de KMP compativel com o kernel exato do
+#                        host (constants.eh_kmp_incompativel_com_kernel),
+#                        tenta_escrever_tag_remoto retorna
+#                        "BLOQUEADO-KMP-kernel-incompativel" em vez de
+#                        escalar ao Mecanismo 3, mesmo com
+#                        --allow-efi-fallback. Motivo: essa falha e um gap
+#                        de empacotamento (falta gerar/copiar o RPM certo,
+#                        ver rpm/README.md), nao incompatibilidade real de
+#                        hardware; arriscar um reboot nao ajuda em nada e
+#                        ja causou 2 TRAVADO-POS-REBOOT em campo no mesmo
+#                        modelo de placa por esse motivo exato.
+#                        tenta_teste_escrita_remoto ganha o mesmo tratamento
+#                        (retorna o mesmo status em vez de FALHOU-todos).
+# REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.4 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.3 - repassa args.module_rpm_dir nas duas
+#                        chamadas de executa_amibios_remoto (gravacao real
+#                        e --test-write), habilitando a instalacao remota
+#                        automatica do KMP amibios_dmi.
+# REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-14 - v2.2.0 - tenta_escrever_tag_remoto/tenta_teste_
+#                        escrita_remoto passam a detectar a assinatura de
+#                        incompatibilidade de firmware (ver constants.py)
+#                        e retornar INCOMPATIVEL-HW em vez do FALHOU-todos
+#                        generico. Novo parametro caminho_log_efi permite
+#                        log isolado por host em --parallel N>1.
+# CREATED: 2026-06-12
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
+# REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
+#                        v2.1.13 (usuario do SO no log, empacotamento
+#                        RPM; ver __main__.py e update_dmi_tag.spec).
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - tenta_escrever_tag_remoto passa a
+#                        acionar o Mecanismo 3 (boot_efi.py) quando os
+#                        Mecanismos 1/2 falharem numa gravacao real (nao
+#                        dry-run) E --allow-efi-fallback estiver ativo.
+#                        Import local (dentro da funcao) para evitar
+#                        qualquer custo/dependencia quando a flag nao e
+#                        usada. Nunca acionado a partir de --test-write.
+# REVISION: 2026-07-07 - v2.1.10 - corrige falha silenciosa na restauracao
+#                        da tag virgem em tenta_teste_escrita_remoto: o
+#                        resultado da cascata de restauracao era descartado,
+#                        entao uma restauracao que falhasse (ex. timeout de
+#                        SSH, ver bios_amidelnx.py) nunca aparecia para o
+#                        operador, a funcao sempre retornava o resultado
+#                        do teste original (ex. "OK-amidelnx"), mesmo com a
+#                        BIOS deixada com o valor de teste em vez do valor
+#                        virgem. Agora o resultado da restauracao e
+#                        verificado; se falhar, loga ERROR detalhado e
+#                        retorna "RESTORE-FALHOU" (visivel na coluna Teste
+#                        Escrita da tabela de resumo).
+# REVISION: 2026-07-07 - v2.1.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem
+#                        mudanca funcional neste arquivo.
+# REVISION: 2026-06-12 - v2.1.2 - extraido de update_dmi_tag.py na
+#                        modularizacao em pacote. Conteudo identico,
+#                        apenas imports ajustados para o pacote.
+# REVISION: 2026-06-15 - v2.1.4 - adiciona tenta_teste_escrita_remoto.
+# REVISION: 2026-06-16 - v2.1.8 - TAG-VIRGEM no test-write: em vez de
+#                        pular, usa bem_usado (se disponivel) ou "O.E.M."
+#                        como valor de teste, grava, verifica e restaura
+#                        o valor virgem original. Refatorado em funcao
+#                        interna _executa_cascata para evitar duplicacao.
+#                        Assinatura de tenta_teste_escrita_remoto recebe
+#                        bem_usado como parametro opcional.
+#
+# =======================================================================
+
+from .constants import (
+    MecanismoIndisponivelError, TodosMecanismosFalharam,
+    eh_incompatibilidade_firmware, eh_kmp_incompativel_com_kernel,
+)
+from .logging_utils import gravar_log, gravar_log_remoto
+from .bios_amidelnx import executa_amidelnx_local, executa_amidelnx_remoto
+from .bios_sysfs import executa_amibios_local, executa_amibios_remoto
+
+
+# Valores de tag que indicam placa sem tag gravada (virgem).
+# O rewrite no-op nao e executado nesses casos pois regravar um
+# placeholder nao valida a capacidade de escrita de tags reais.
+_TAGS_VIRGEM = frozenset({
+    "Default String",
+    "Default string",
+    "Not Specified",
+    "Not Provided",
+    "To Be Filled By O.E.M.",
+    "To be filled by O.E.M.",
+    "Asset-1234567890",
+    "Chassis Asset Tag",
+    "",
+})
+
+
+def tenta_escrever_tag_local(tag, args, kmp_instalado,
+                              caminho_log_local=""):
+    """
+    NAME: tenta_escrever_tag_local
+    DESCRIPTION: Cascata de mecanismos local. Retorna string descritiva.
+    RETURNS: str, resultado descritivo
+    """
+    def _log(nivel, msg):
+        gravar_log(args.log_file, nivel, msg, args.verbose, args.csv,
+                   caminho_log_local)
+
+    dry_run = not args.write
+
+    detalhe_amidelnx = detalhe_amibios = ""
+
+    _log("INFO", "--- Tentando Mecanismo 1: amidelnx_64 ---")
+    try:
+        sucesso, detalhe_amidelnx = executa_amidelnx_local(
+            tag, args.amide_local_path, ["sudo"],
+            args.log_file, args.verbose, args.csv,
+            dry_run=dry_run, caminho_log_local=caminho_log_local,
+        )
+        if dry_run: return "DRY-RUN"
+        if sucesso: return "OK-amidelnx"
+        _log("WARNING", "amidelnx_64 nao confirmou gravacao; tentando fallback.")
+    except MecanismoIndisponivelError as e:
+        _log("WARNING", "amidelnx_64 indisponivel: {}".format(e))
+        detalhe_amidelnx = str(e)
+
+    _log("INFO", "--- Tentando Mecanismo 2: amibios_dmi (sysfs) ---")
+    try:
+        sucesso, detalhe_amibios = executa_amibios_local(
+            tag, args.target, kmp_instalado,
+            args.module_repo_url, args.module_package,
+            args.log_file, args.verbose, args.csv,
+            dry_run=dry_run, caminho_log_local=caminho_log_local,
+        )
+        if dry_run: return "DRY-RUN"
+        if sucesso: return "OK-amibios"
+        _log("ERROR", "amibios_dmi tambem nao confirmou gravacao.")
+    except MecanismoIndisponivelError as e:
+        _log("ERROR", "amibios_dmi indisponivel: {}".format(e))
+        detalhe_amibios = str(e)
+
+    if not dry_run:
+        # Assinaturas conhecidas de incompatibilidade de firmware em ambos
+        # os mecanismos (ver constants.SINAIS_INCOMPATIBILIDADE_HW):
+        # sinaliza distinto de uma falha generica/transitoria.
+        if (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                and eh_incompatibilidade_firmware(detalhe_amibios)):
+            raise TodosMecanismosFalharam(
+                "INCOMPATIVEL-HW: firmware rejeitou ambos os mecanismos "
+                "para tag '{}' (amidelnx: {}; amibios: {}).".format(
+                    tag, detalhe_amidelnx, detalhe_amibios))
+        raise TodosMecanismosFalharam(
+            "Nenhum mecanismo obteve sucesso para tag '{}'.".format(tag))
+    return "DRY-RUN"
+
+
+def tenta_escrever_tag_remoto(ip, ssh_user, sudo_cmd, tag, args,
+                               caminho_log_remoto, caminho_log_local,
+                               caminho_log_efi=None):
+    """
+    NAME: tenta_escrever_tag_remoto
+    DESCRIPTION: Cascata de mecanismos remota. Retorna string descritiva.
+    PARAMETER: caminho_log_efi - log dedicado do Mecanismo 3. Se None
+                                 (default), usa args.log_efi (compat com
+                                 modo sequencial). Em --parallel N>1, o
+                                 chamador (__main__.py) passa um caminho
+                                 por host, isolado, para evitar escrita
+                                 concorrente no mesmo arquivo entre
+                                 threads (ver ROADMAP.md).
+    RETURNS: str, resultado descritivo
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                          nivel, msg, caminho_log_local, args.verbose, args.csv)
+
+    dry_run = not args.write
+    detalhe_amidelnx = detalhe_amibios = ""
+
+    _log("INFO", "--- Tentando Mecanismo 1: amidelnx_64 ---")
+    try:
+        sucesso, detalhe_amidelnx = executa_amidelnx_remoto(
+            ip, ssh_user, sudo_cmd, tag,
+            args.amide_remote_path, args.amide_local_path,
+            caminho_log_remoto, caminho_log_local,
+            args.verbose, args.csv, dry_run=dry_run,
+            amide_repo_url=args.amide_repo_url,
+            amide_package=args.amide_package,
+        )
+        if dry_run: return "DRY-RUN"
+        if sucesso: return "OK-amidelnx"
+        _log("WARNING", "amidelnx_64 nao confirmou gravacao; tentando fallback.")
+    except MecanismoIndisponivelError as e:
+        _log("WARNING", "amidelnx_64 indisponivel: {}".format(e))
+        detalhe_amidelnx = str(e)
+
+    _log("INFO", "--- Tentando Mecanismo 2: amibios_dmi (sysfs) ---")
+    try:
+        sucesso, detalhe_amibios = executa_amibios_remoto(
+            ip, ssh_user, sudo_cmd, tag,
+            args.target, caminho_log_remoto, caminho_log_local,
+            args.verbose, args.csv, dry_run=dry_run,
+            module_repo_url=args.module_repo_url,
+            module_package=args.module_package,
+            module_rpm_dir=args.module_rpm_dir,
+        )
+        if dry_run: return "DRY-RUN"
+        if sucesso: return "OK-amibios"
+        _log("ERROR", "amibios_dmi tambem nao confirmou gravacao.")
+    except MecanismoIndisponivelError as e:
+        _log("ERROR", "amibios_dmi indisponivel: {}".format(e))
+        detalhe_amibios = str(e)
+
+    if not dry_run:
+        _log("ERROR", "Todos os mecanismos falharam para tag '{}' em {}.".format(tag, ip))
+
+        # Assinaturas conhecidas de incompatibilidade de firmware em ambos
+        # os mecanismos (ver constants.SINAIS_INCOMPATIBILIDADE_HW),
+        # constatado em campo (Dell Precision 5520, 2026-07-14): distingue
+        # "essa BIOS nao implementa a interface AMI" de uma falha
+        # generica/transitoria (rede, sudo, timeout).
+        incompativel_1e2 = (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                             and eh_incompatibilidade_firmware(detalhe_amibios))
+        if incompativel_1e2:
+            _log("WARNING",
+                 "Assinatura de incompatibilidade de firmware detectada em "
+                 "ambos os mecanismos (amidelnx: {}; amibios: {}).".format(
+                     detalhe_amidelnx, detalhe_amibios))
+
+        # Trava: Mecanismo 2 pode ter falhado so por falta de KMP compilado
+        # para o kernel exato do host (ver environment.py:
+        # instala_modulo_remoto e constants.MARCADOR_KMP_KERNEL_
+        # INCOMPATIVEL), nao por o hardware ser de fato incompativel. Nesse
+        # caso o modelo E compativel em principio; reiniciar o host via
+        # Mecanismo 3 nao resolve nada e so arrisca um TRAVADO-POS-REBOOT a
+        # toa (ja confirmado 2x em campo com o mesmo modelo Gigabyte/PERTOSA
+        # H81M-S2PH, ver rpm/README.md). Bloqueia ANTES de checar
+        # --allow-efi-fallback: essa flag nao deve valer para este motivo.
+        if eh_kmp_incompativel_com_kernel(detalhe_amibios):
+            _log("WARNING",
+                 "Mecanismo 2 falhou por falta de KMP compativel com o "
+                 "kernel deste host (nao e incompatibilidade de hardware). "
+                 "Mecanismo 3 (reboot) NAO sera tentado por seguranca, "
+                 "mesmo com --allow-efi-fallback. Gere/adicione o RPM do "
+                 "kernel certo (ver rpm/README.md, projeto OBS "
+                 "home:mariosergiosl:amibios_dmi) e rode novamente.")
+            return "BLOQUEADO-KMP-kernel-incompativel"
+
+        if getattr(args, "allow_efi_fallback", False):
+            # Import local: boot_efi.py e um modulo experimental, isolado do
+            # restante da cascata; so e importado quando a flag e usada.
+            from .boot_efi import executa_boot_efi_remoto
+            log_efi_efetivo = (caminho_log_efi if caminho_log_efi is not None
+                                else getattr(args, "log_efi", ""))
+            _log("WARNING",
+                 "Mecanismos 1/2 falharam, tentando Mecanismo 3 (boot EFI). "
+                 "Ver log dedicado: {}".format(log_efi_efetivo))
+            return executa_boot_efi_remoto(
+                ip, ssh_user, sudo_cmd, tag, args,
+                caminho_log_remoto, caminho_log_local,
+                log_efi_efetivo)
+
+        if incompativel_1e2:
+            return "INCOMPATIVEL-HW"
+
+    return "FALHOU-todos"
+
+
+def tenta_teste_escrita_remoto(ip, ssh_user, sudo_cmd, tag_atual, args,
+                                caminho_log_remoto, caminho_log_local,
+                                bem_usado=""):
+    """
+    NAME: tenta_teste_escrita_remoto
+    DESCRIPTION: Executa um rewrite no-op para validar a capacidade de
+                 escrita do equipamento sem alterar nenhum dado. Ativado
+                 pela flag --test-write, independente de --write.
+
+                 Fluxo:
+                   1. Se tag_atual DESCONHECIDA -> TAG-DESCONH (pulado).
+                   2. Se tag_atual virgem (Default String etc.):
+                      usa bem_usado como valor de teste se disponivel,
+                      ou "O.E.M." como fallback. Grava, verifica, e
+                      restaura o valor virgem original ao final.
+                      Retorna OK-* ou FALHOU-todos conforme resultado.
+                   3. Tag conhecida -> rewrite no-op direto.
+                   Cascata: Mecanismo 1 (amidelnx_64) -> Mecanismo 2
+                   (amibios_dmi). Para no primeiro sucesso.
+                   O BBconfig.conf NAO e atualizado por esta funcao.
+
+    PARAMETER: ip                - endereco IP do host remoto
+               ssh_user          - usuario SSH
+               sudo_cmd          - prefixo sudo no host
+               tag_atual         - valor atual lido da BIOS
+               args              - namespace do argparse
+               caminho_log_remoto - log remoto do host
+               caminho_log_local  - log consolidado local
+               bem_usado         - BEM_NUMERO calculado (14 digitos),
+                                   usado como valor de teste quando a
+                                   tag atual for virgem (opcional)
+    RETURNS: str, "OK-amidelnx", "OK-amibios", "FALHOU-todos",
+             "INCOMPATIVEL-HW", "BLOQUEADO-KMP-kernel-incompativel"
+             (Mecanismo 2 falhou so por falta de KMP para o kernel exato
+             do host, ver constants.eh_kmp_incompativel_com_kernel),
+             "RESTORE-FALHOU" (teste gravou com sucesso mas a restauracao do
+             valor virgem original falhou, a BIOS deste host permanece com
+             o valor de teste, requer correcao manual), "TAG-VIRGEM"
+             (obsoleto, mantido para compatibilidade) ou "TAG-DESCONH"
+    """
+    def _log(nivel, msg):
+        gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log_remoto,
+                          nivel, msg, caminho_log_local, args.verbose, args.csv)
+
+    def _executa_cascata(tag_teste):
+        """Executa cascata Mec1->Mec2 com tag_teste. Retorna (resultado, sucesso)."""
+        detalhe_amidelnx = detalhe_amibios = ""
+
+        _log("INFO", "[TEST-WRITE] --- Mecanismo 1: amidelnx_64 ---")
+        try:
+            sucesso, detalhe_amidelnx = executa_amidelnx_remoto(
+                ip, ssh_user, sudo_cmd, tag_teste,
+                args.amide_remote_path, args.amide_local_path,
+                caminho_log_remoto, caminho_log_local,
+                args.verbose, args.csv, dry_run=False,
+                amide_repo_url=args.amide_repo_url,
+                amide_package=args.amide_package,
+            )
+            if sucesso:
+                _log("INFO",
+                     "[TEST-WRITE] Mecanismo 1 OK, modelo compativel "
+                     "com amidelnx_64.")
+                return "OK-amidelnx", True
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 1 falhou; tentando Mecanismo 2.")
+        except MecanismoIndisponivelError as e:
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 1 indisponivel: {}".format(e))
+            detalhe_amidelnx = str(e)
+
+        _log("INFO", "[TEST-WRITE] --- Mecanismo 2: amibios_dmi (sysfs) ---")
+        try:
+            sucesso, detalhe_amibios = executa_amibios_remoto(
+                ip, ssh_user, sudo_cmd, tag_teste,
+                args.target, caminho_log_remoto, caminho_log_local,
+                args.verbose, args.csv, dry_run=False,
+                module_repo_url=args.module_repo_url,
+                module_package=args.module_package,
+                module_rpm_dir=args.module_rpm_dir,
+            )
+            if sucesso:
+                _log("INFO",
+                     "[TEST-WRITE] Mecanismo 2 OK, modelo compativel "
+                     "via amibios_dmi.")
+                return "OK-amibios", True
+            _log("ERROR", "[TEST-WRITE] Mecanismo 2 tambem falhou.")
+        except MecanismoIndisponivelError as e:
+            _log("ERROR",
+                 "[TEST-WRITE] Mecanismo 2 indisponivel: {}".format(e))
+            detalhe_amibios = str(e)
+
+        if (eh_incompatibilidade_firmware(detalhe_amidelnx)
+                and eh_incompatibilidade_firmware(detalhe_amibios)):
+            _log("ERROR",
+                 "[TEST-WRITE] Ambos os mecanismos falharam com assinatura de "
+                 "incompatibilidade de firmware conhecida (amidelnx: {}; "
+                 "amibios: {}).".format(detalhe_amidelnx, detalhe_amibios))
+            return "INCOMPATIVEL-HW", False
+
+        if eh_kmp_incompativel_com_kernel(detalhe_amibios):
+            _log("WARNING",
+                 "[TEST-WRITE] Mecanismo 2 falhou por falta de KMP "
+                 "compativel com o kernel deste host (ver rpm/README.md); "
+                 "nao e incompatibilidade de hardware.")
+            return "BLOQUEADO-KMP-kernel-incompativel", False
+
+        _log("ERROR",
+             "[TEST-WRITE] Ambos os mecanismos falharam, modelo "
+             "incompativel ou binario ausente.")
+        return "FALHOU-todos", False
+
+    # 1. Tag DESCONHECIDA, nao ha valor para testar
+    if not tag_atual or tag_atual == "DESCONHECIDO":
+        _log("WARNING",
+             "[TEST-WRITE] Tag atual DESCONHECIDA, teste de escrita pulado.")
+        return "TAG-DESCONH"
+
+    # 2. Tag VIRGEM, usa BEM_NUMERO ou "O.E.M." como valor de teste
+    if tag_atual.strip() in _TAGS_VIRGEM:
+        tag_teste  = bem_usado.strip() if bem_usado and bem_usado.strip() else "O.E.M."
+        tag_restore = tag_atual.strip()
+        _log("INFO",
+             "[TEST-WRITE] Tag virgem ('{}'), testando com '{}' "
+             "e restaurando ao final.".format(tag_restore, tag_teste))
+        resultado, gravou = _executa_cascata(tag_teste)
+        if gravou:
+            # Restaura o valor virgem original
+            _log("INFO",
+                 "[TEST-WRITE] Restaurando tag virgem original: "
+                 "'{}'".format(tag_restore if tag_restore else "vazio"))
+            tag_restaurar = tag_restore if tag_restore else "O.E.M."
+            _, restaurou = _executa_cascata(tag_restaurar)
+            if not restaurou:
+                # Nao pode ficar silencioso: a BIOS deste host ficou com o
+                # valor de teste em vez do valor virgem original. Isso ja
+                # aconteceu em campo (ver historico de REVISION) por um
+                # bug de quoting hoje corrigido em bios_amidelnx.py, mas a
+                # falha de restauracao pode ter outras causas (rede, sudo,
+                # etc.) e precisa continuar visivel sempre que ocorrer.
+                _log("ERROR",
+                     "[TEST-WRITE] ATENCAO, restauracao da tag virgem "
+                     "FALHOU. A BIOS deste host permanece gravada com o "
+                     "valor de teste '{}' em vez do valor virgem original "
+                     "'{}'. Corrija manualmente assim que possivel (ex.: "
+                     "sudo ~/amidelnx_64 /ca '{}').".format(
+                         tag_teste, tag_restore, tag_restore))
+                return "RESTORE-FALHOU"
+        return resultado
+
+    # 3. Tag conhecida, rewrite no-op direto
+    _log("INFO",
+         "[TEST-WRITE] Iniciando rewrite no-op com tag atual: "
+         "'{}'".format(tag_atual))
+    resultado, _ = _executa_cascata(tag_atual)
+    return resultado
+

@@ -1,0 +1,19 @@
+<services>
+  <service name="tar_scm">
+    <param name="scm">git</param>
+    <param name="url">https://github.com/mariosergiosl/update_dmi_tag.git</param>
+    <param name="revision">v2.2.9</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="versionrewrite-pattern">v(.*)</param>
+    <param name="changesgenerate">enable</param>
+  </service>
+  <service name="recompress">
+    <param name="file">*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+  <service name="set_version"/>
+  <service name="extract_file">
+    <param name="archive">*.tar.gz</param>
+    <param name="files">*/update_dmi_tag.spec</param>
+  </service>
+</services>

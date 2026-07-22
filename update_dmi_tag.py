@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# =======================================================================
+#
+# FILE: update_dmi_tag.py
+#
+# USAGE: update_dmi_tag.py [opcoes]
+#        update_dmi_tag.py --hosts <arquivo> [opcoes]
+#
+# DESCRIPTION: Shim de compatibilidade. A partir da v2.1.2, a logica do
+#              script foi modularizada no pacote update_dmi_tag/ (16
+#              modulos, incluindo __init__.py e __main__.py). Este
+#              arquivo preserva o comando de execucao historico,
+#              "python3 update_dmi_tag.py [opcoes]" -- delegando para
+#              update_dmi_tag.__main__:main.
+#
+#              Estrutura esperada no diretorio de trabalho:
+#                update_dmi_tag.py        <- este arquivo
+#                update_dmi_tag/          <- pacote (16 modulos)
+#                amidelnx_64               <- binario AMI (modo remoto)
+#                hosts.txt, .ssh_pass, etc.
+#
+#              Alternativa equivalente, sem o shim:
+#                python3 -m update_dmi_tag [opcoes]
+#              (executar de dentro do diretorio que contem a pasta
+#              update_dmi_tag/, ou com essa pasta no PYTHONPATH).
+#
+# OPTIONS: ver ajuda em "--help"
+#
+# REQUIREMENTS: python3 (stdlib apenas, 3.6+)
+#               pacote update_dmi_tag/ no mesmo diretorio
+#
+# BUGS: ---
+#
+# NOTES: Codificacao US-ASCII nos comentarios e codigo-fonte.
+#
+# AUTHOR: Mario Luz mario.luz@suse.com
+# COMPANY: SUSE
+#
+# VERSION: 2.2.9
+# REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-20 - v2.2.8 - corrige contagem de modulos desatualizada
+#                        nos comentarios (dizia "14 modulos", o pacote real
+#                        tem 16: 14 funcionais + __init__.py + __main__.py).
+#                        Comentario apenas, sem mudanca de comportamento.
+# REVISION: 2026-07-17 - v2.2.8 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.7 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.6 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-17 - v2.2.5 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.4 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.3 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-16 - v2.2.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-07-14 - v2.2.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+#
+# CREATED: 2026-06-12
+# REVISION: 2026-06-12 - v2.1.2 - criacao do shim na modularizacao em
+#                        pacote. Todo o codigo anterior (3.586 linhas em
+#                        arquivo unico) foi distribuido em modulos
+#                        dentro de update_dmi_tag/ (16 ao todo hoje,
+#                        incluindo __init__.py e __main__.py). Ver
+#                        update_dmi_tag/constants.py para o historico
+#                        completo de revisoes (REVISION) anterior a esta.
+# REVISION: 2026-07-06 - v2.1.9 - atualizacao do shim para nova versao de controle.
+# REVISION: 2026-07-07 - v2.1.10 - atualizacao do shim para nova versao de controle.
+# REVISION: 2026-07-13 - v2.1.14 - renumeracao do mecanismo de boot EFI
+#                        de "Mecanismo 4" para "Mecanismo 3" (elimina o
+#                        buraco na numeracao; cascata agora 1, 2, 3). So
+#                        exibicao (log/ajuda/docs); identificadores
+#                        funcionais (status, flags, labels) inalterados.
+# REVISION: 2026-07-09 - v2.1.13 - atualizacao de numero de versao para
+#                        v2.1.13 (usuario do SO no log, empacotamento
+#                        RPM; ver __main__.py e update_dmi_tag.spec).
+# REVISION: 2026-07-09 - v2.1.12 - atualizacao de numero de versao para
+#                        v2.1.12 (correcoes no Mecanismo 3, ver
+#                        boot_efi.py).
+# REVISION: 2026-07-08 - v2.1.11 - atualizacao do shim para nova versao de controle.
+#
+# =======================================================================
+
+import os
+import sys
+
+# Garante que o diretorio deste shim esteja no sys.path, para que
+# "import update_dmi_tag" encontre o pacote irmao mesmo quando o shim
+# e chamado por caminho absoluto/relativo de outro diretorio.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from update_dmi_tag.__main__ import main
+
+if __name__ == "__main__":
+    sys.exit(main())

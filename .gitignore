@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+update_git.bash
+.claude/
+amidelnx_64
+*.log
+logs/
+hosts_inacessiveis_*.txt
+bb_repo.conf
+efi_boot/docs/
+efi_boot/dmi-atm/AMIDEEFIx64.EFI
+efi_boot/dmi-atm/bootx64_ANTIGO_problematico.efi
+iso/
+.ssh_pass
+update_dmi_tag-v*.zip
+packages_files/
+
+# 2026-07-20: removidos do rastreamento publico por seguranca, enquanto
+# se avalia se o repositorio continua totalmente aberto. Docs_Test_boot
+# tem fotos reais de equipamento com identificadores visiveis que nao
+# devem circular publicamente; manual_operacao.md/.pdf documentam esse
+# mesmo incidente em detalhe; assets/ so e usado por eles (logo/banner
+# + diagramas). bb_repo.conf.example incluido por associacao de nome,
+# embora nao tenha segredo (so template vazio). Os arquivos continuam
+# no disco local e nos zips internos, so saem da arvore publica do Git
+# a partir de agora.
+manual_operacao.md
+manual_operacao.pdf
+bb_repo.conf.example
+Docs_Test_boot/
+assets/
+
+# 2026-07-22: relatorio interno com IPs/hostnames reais de campo (nao
+# publicar). Fica fora do rastreamento do Git, mas continua no disco
+# local e nos zips internos (minimal e completo).
+relatorios/
