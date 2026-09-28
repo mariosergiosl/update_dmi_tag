@@ -30,7 +30,27 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - padrao de --bbconfig-digitos passa a 13
+#                        (formato gravado pelo gestor oficial do arquivo);
+#                        --bios-digitos continua 14.
+# REVISION: 2026-09-28 - v2.3.2 - opcoes --bios-digitos e --bbconfig-digitos
+#                        (13 ou 14, padrao 14), independentes; cabecalho do
+#                        log registra os dois formatos (linha Digit.).
+# REVISION: 2026-09-24 - v2.3.1 - modo remoto deixa de trocar --log-file
+#                        por um caminho do runner (o log dentro do alvo
+#                        nunca era gravado); cabecalho registra o cliente
+#                        SSH e o ssh-rsa legado (habilita_ssh_rsa_legado);
+#                        ao final, remove as pastas ssh-copy-id.* desta
+#                        execucao.
+# REVISION: 2026-09-23 - v2.3.0 - nova opcao --acesso (perfis de acesso em
+#                        arquivo, tentados em ordem host a host, ver
+#                        acesso.py); --module-package passa a ser
+#                        automatico (flavor do kernel de cada host); tupla
+#                        de hosts validos ganha o perfil escolhido na
+#                        triagem; ajuda do --test-write corrigida (tag
+#                        virgem e testada com o BEM e restaurada, nao
+#                        pulada).
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -153,6 +173,7 @@ import argparse
 import getpass
 import concurrent.futures
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -172,12 +193,22 @@ from .constants import (
 )
 from .logging_utils import gravar_log
 from .ssh_bootstrap import _resolve_ssh_pass
-from .environment import coletar_dados_ambiente, verifica_pacote_rpm
-from .patrimonio import valida_e_calcula_tag, valida_via_patrimonial_cli
+from .acesso import (
+    ArquivoAcessoInvalido, carrega_perfis_acesso, perfil_da_linha_de_comando,
+    descreve_perfis,
+)
+from .environment import (
+    coletar_dados_ambiente, verifica_pacote_rpm, pacote_kmp_para_kernel,
+)
+from .patrimonio import (
+    valida_e_calcula_tag, valida_via_patrimonial_cli, formata_bem,
+)
 from .bbconfig import le_valor_configuracao, sincroniza_bbconfig_local
 from .write_cascade import tenta_escrever_tag_local
 from .hosts import le_arquivo_hosts
 from .host_processor import processa_host_remoto, triagem_hosts_remotos
+from .ssh_utils import habilita_ssh_rsa_legado
+from .ssh_bootstrap import limpa_temporarios_ssh_copy_id
 from .summary import monta_tabela_resumo
 
 
@@ -214,7 +245,7 @@ def _processa_hosts_paralelo(hosts_validos, args, caminho_log_local):
                  especifico), nao na ordem de conclusao. A prova de
                  kill: se o processo morrer no meio, os logs por host ja
                  estao no disco em logs/<timestamp>/hosts/.
-    PARAMETER: hosts_validos     - lista de (ip, bem_lista, chave_ok),
+    PARAMETER: hosts_validos     - lista de (ip, bem_lista, chave_ok, perfil),
                                     ja triados na Fase 1
                args              - namespace do argparse (args.parallel
                                     define o tamanho do pool)
@@ -239,11 +270,12 @@ def _processa_hosts_paralelo(hosts_validos, args, caminho_log_local):
         return log_host, log_efi_host
 
     def _worker(item):
-        ip, bem_lista, chave_ok = item
+        ip, bem_lista, chave_ok, perfil = item
         log_host, log_efi_host = _caminhos_host(ip)
         registro = processa_host_remoto(
             ip, bem_lista, args, log_host,
-            chave_ja_validada=chave_ok, caminho_log_efi=log_efi_host)
+            chave_ja_validada=chave_ok, caminho_log_efi=log_efi_host,
+            perfil=perfil)
         return ip, registro
 
     total = len(hosts_validos)
@@ -273,7 +305,7 @@ def _processa_hosts_paralelo(hosts_validos, args, caminho_log_local):
     # conclusao): facil achar um host especifico no consolidado.
     registros_ordenados = []
     with open(caminho_log_local, "a", encoding="utf-8") as consolidado:
-        for ip, _bem, _chave in hosts_validos:
+        for ip, _bem, _chave, _perfil in hosts_validos:
             registros_ordenados.append(resultados_por_ip[ip])
             log_host, _ = _caminhos_host(ip)
             if os.path.isfile(log_host):
@@ -282,7 +314,7 @@ def _processa_hosts_paralelo(hosts_validos, args, caminho_log_local):
 
     if log_efi_ativo and getattr(args, "log_efi", ""):
         with open(args.log_efi, "a", encoding="utf-8") as efi_consolidado:
-            for ip, _bem, _chave in hosts_validos:
+            for ip, _bem, _chave, _perfil in hosts_validos:
                 _, log_efi_host = _caminhos_host(ip)
                 if log_efi_host and os.path.isfile(log_efi_host):
                     with open(log_efi_host, "r", encoding="utf-8", errors="replace") as f:
@@ -340,6 +372,30 @@ def main():
         help="Arquivo de hosts (IP ou IP,BEM_NUMERO por linha). Ativa modo remoto.",
     )
     parser.add_argument(
+        "--bios-digitos",
+        type=int,
+        choices=(13, 14),
+        default=14,
+        help=(
+            "v2.3.2. Formato do numero gravado na BIOS: 14 (padrao, 13 "
+            "digitos + DV) ou 13 (sem o DV). A validacao usa sempre as 14 "
+            "posicoes. Com 13, equipamento que ja tem 14 na BIOS e "
+            "regravado."
+        ),
+    )
+    parser.add_argument(
+        "--bbconfig-digitos",
+        type=int,
+        choices=(13, 14),
+        default=14,
+        help=(
+            "v2.3.2. Formato do numero gravado no arquivo de configuracao "
+            "do equipamento (--config/--var): 13 (sem "
+            "o DV, o mesmo formato gravado pelo gestor oficial do arquivo) "
+            "ou 14 (padrao). Independente de --bios-digitos."
+        ),
+    )
+    parser.add_argument(
         "--parallel",
         type=int,
         default=1,
@@ -385,6 +441,18 @@ def main():
         help=("Arquivo texto contendo a senha SSH na primeira linha. "
               "Usado apenas se --ssh-pass nao for fornecido e SSH_PASS "
               "nao estiver definida no ambiente."),
+    )
+    parser.add_argument(
+        "--acesso",
+        default="",
+        metavar="ARQUIVO",
+        help=("Arquivo de perfis de acesso (ver acesso.conf.example): um "
+              "perfil por secao, com usuario, senha e senha_sudo opcional. "
+              "Os perfis sao tentados na ordem, host a host, e o primeiro "
+              "que entrar e usado; permite um unico lote com linhas de "
+              "acesso diferente (ex.: operador nas SLE 12/15, root nas "
+              "SLE 11). Exige permissao 600. Com --acesso, --ssh-user, "
+              "--ssh-pass, --ssh-pass-file e --sudo-pass sao ignorados."),
     )
 
     # --- Configuracao corporativa ---
@@ -439,9 +507,11 @@ def main():
     )
     parser.add_argument(
         "--module-package",
-        default=DEFAULT_MODULE_PACKAGE,
-        help="Nome do pacote KMP a instalar (padrao: {})".format(
-            DEFAULT_MODULE_PACKAGE),
+        default=None,
+        help=("Nome do pacote KMP a instalar. Padrao: automatico, pelo "
+              "flavor do kernel de cada host (amibios-dmi-kmp-default, "
+              "amibios-dmi-kmp-pae, ...); sem kernel legivel, {}. Informe "
+              "so para forcar um nome.".format(DEFAULT_MODULE_PACKAGE)),
     )
     parser.add_argument(
         "--module-rpm-dir",
@@ -560,8 +630,10 @@ def main():
             "Executa um rewrite no-op (regrava o valor atual da BIOS) via "
             "cascata amidelnx_64 -> amibios_dmi. Pode ser combinado com "
             "DRY-RUN (sem --write) ou com --write. O resultado aparece na "
-            "coluna 'Teste Escrita' da tabela de resumo. Hosts com tag "
-            "virgem (Default String) ou DESCONHECIDA tem o teste pulado."
+            "coluna 'Teste Escrita' da tabela de resumo. Com tag virgem "
+            "(Default String, To Be Filled By O.E.M. e similares), grava o "
+            "BEM como valor de teste e restaura o valor original ao final; "
+            "com tag DESCONHECIDA o teste e pulado."
         ),
     )
     parser.add_argument(
@@ -577,6 +649,18 @@ def main():
     # Sempre define args.ssh_pass_efetiva (mesmo que vazia) para que o
     # bootstrap possa consulta-la com getattr sem erro.
     args.ssh_pass_efetiva = _resolve_ssh_pass(args)
+
+    # v2.3.0: perfis de acesso do modo remoto. Com --acesso, vem do
+    # arquivo (validado aqui, antes de qualquer conexao); sem ele, um
+    # perfil unico da linha de comando, como nas versoes anteriores.
+    if args.acesso:
+        try:
+            args.perfis_acesso = carrega_perfis_acesso(args.acesso)
+        except ArquivoAcessoInvalido as e:
+            sys.stderr.write("Erro: {}\n".format(e))
+            sys.exit(RC_PERMISSION_ERROR)
+    else:
+        args.perfis_acesso = perfil_da_linha_de_comando(args)
 
     # Validacoes previas de arquivos locais.
     # Regra: parametro informado explicitamente pelo usuario e invalido =>
@@ -704,13 +788,10 @@ def main():
                 sys.stderr.write("Execucao cancelada.\n")
                 sys.exit(RC_SAFETY_ABORT)
 
-    # Em modo remoto, se --log-file nao foi passado explicitamente,
-    # redireciona para arquivo local (evita Permission denied em /var/log).
-    if args.hosts and args.log_file == DEFAULT_LOG_FILE:
-        args.log_file = os.path.join(
-            os.path.dirname(os.path.abspath(args.log_local)),
-            'update_dmi_tag_alvo.log'
-        )
+    # v2.3.1: em modo remoto, --log-file e o log DENTRO de cada alvo
+    # (padrao /var/log/update_dmi_tag.log, manual secao 8.3). Ate a v2.3.0
+    # ele era trocado por um caminho do runner, que nao existe no alvo, e
+    # o log do alvo nunca era gravado.
 
     # Validacao: --csv incompativel com --hosts
     if args.csv and args.hosts:
@@ -748,8 +829,16 @@ def main():
         _log_local("INFO", "Inicio: {}".format(
             time.strftime("%Y-%m-%d %H:%M:%S")))
         _log_local("INFO", "Operad: {}".format(_operador_execucao()))
+        _log_local("INFO", "SSH   : {}".format(habilita_ssh_rsa_legado()))
+        inicio_execucao = time.time()
         _log_local("INFO", "Hosts : {}".format(args.hosts))
-        _log_local("INFO", "User  : {}".format(args.ssh_user))
+        _log_local("INFO", "Digit.: BIOS {}, arquivo de configuracao {}".format(
+            args.bios_digitos, args.bbconfig_digitos))
+        if args.acesso:
+            _log_local("INFO", "Acesso: {} (perfis: {})".format(
+                args.acesso, descreve_perfis(args.perfis_acesso)))
+        else:
+            _log_local("INFO", "User  : {}".format(args.ssh_user))
         _log_local("INFO", "Amide : {}".format(args.amide_local_path))
         _log_local("INFO", "Log   : {}".format(args.log_local))
 
@@ -805,14 +894,21 @@ def main():
             registros.extend(
                 _processa_hosts_paralelo(hosts_validos, args, args.log_local))
         else:
-            for ip, bem_lista, chave_ok in hosts_validos:
+            for ip, bem_lista, chave_ok, perfil in hosts_validos:
                 registro = processa_host_remoto(
                     ip, bem_lista, args, args.log_local,
-                    chave_ja_validada=chave_ok)
+                    chave_ja_validada=chave_ok, perfil=perfil)
                 registros.append(registro)
 
         monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv,
                             write_ativo=args.write)
+
+        # v2.3.1: pastas ~/.ssh/ssh-copy-id.* que o ssh-copy-id deixou ao
+        # ser interrompido nesta execucao (so depois de todos os hosts).
+        n_temp = limpa_temporarios_ssh_copy_id(inicio_execucao)
+        if n_temp:
+            _log_local("INFO", "Removidas {} pasta(s) temporaria(s) "
+                       "ssh-copy-id desta execucao.".format(n_temp))
 
         _log_local("INFO", "=" * 70)
         _log_local("INFO", "FINALE")
@@ -836,6 +932,11 @@ def main():
     # MODO STANDALONE
     # ===================================================================
     checa_superusuario()
+
+    # v2.3.0: sem --module-package, o nome do KMP vem do flavor do kernel
+    # desta maquina (mesma regra do modo remoto).
+    if not args.module_package:
+        args.module_package = pacote_kmp_para_kernel(platform.release())
 
     gravar_log(args.log_file, "INFO",
                "--- Iniciando processo de atualizacao de DMI Asset Tag ---",
@@ -920,9 +1021,14 @@ def main():
                            "Nao foi possivel ler valor antigo: {}".format(e),
                            args.verbose, args.csv)
 
+        # v2.3.2: formato de cada destino (--bios-digitos e
+        # --bbconfig-digitos); a validacao acima usa sempre 14 posicoes.
+        tag_bios = formata_bem(tag_esperada, args.bios_digitos)
+        valor_bbconfig = formata_bem(tag_esperada, args.bbconfig_digitos)
+
         # Cascata de escrita
         resultado_escrita = tenta_escrever_tag_local(
-            tag_esperada, args, kmp_instalado)
+            tag_bios, args, kmp_instalado)
 
         if str(resultado_escrita).startswith("OK"):
             # Leitura do valor novo para CSV e log
@@ -931,9 +1037,9 @@ def main():
                     with open(args.target, "r") as f:
                         valor_novo = f.read().strip()
                 except Exception:
-                    valor_novo = tag_esperada
+                    valor_novo = tag_bios
             else:
-                valor_novo = tag_esperada
+                valor_novo = tag_bios
             gravar_log(args.log_file, "INFO",
                        "--- Atualizacao concluida: {} ---".format(resultado_escrita),
                        args.verbose, args.csv)
@@ -946,7 +1052,7 @@ def main():
             # so comeca com "OK" quando args.write esta ativo).
             if args.write:
                 sincroniza_bbconfig_local(
-                    args.config, args.var, valor_config, tag_esperada,
+                    args.config, args.var, valor_config, valor_bbconfig,
                     args.log_file, args.verbose, args.csv)
         elif resultado_escrita == "DRY-RUN":
             valor_novo = valor_antigo

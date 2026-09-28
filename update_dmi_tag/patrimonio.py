@@ -15,7 +15,20 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - valida_e_calcula_tag: 14 posicoes com DV
+#                        divergente do calculado passam a levantar
+#                        ValueError (resultado INVALIDO); antes eram
+#                        aceitas com aviso. A libpatrimonial descarta esse
+#                        numero; o operador corrige o valor e roda de novo.
+# REVISION: 2026-09-28 - v2.3.2 - formata_bem: numero em 14 posicoes ou so
+#                        os 13 digitos, por destino.
+# REVISION: 2026-09-24 - v2.3.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-23 - v2.3.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -223,11 +236,21 @@ def valida_e_calcula_tag(valor_config, caminho_log, verbose, suprime_tela,
         base_13      = valor_upper[:13]
         dv_lido      = valor_upper[13]
         dv_calculado = calcula_dv_modulo11(base_13)
+        # v2.3.3: DV divergente deixa de ser aceito. A biblioteca oficial
+        # (libpatrimonial) descarta esse numero e trata a BIOS como sem
+        # numero; gravar assim so esconde o erro. O operador corrige o
+        # valor na lista (13 digitos ou 14 com o DV certo) e roda de novo.
         if dv_lido != dv_calculado:
-            _log("WARNING",
-                 "DV lido ({}) difere do calculado ({}) para base {} "
-                 "(aceito conforme padrao patrimonial).".format(
-                     dv_lido, dv_calculado, base_13))
+            _log("ERROR",
+                 "DV lido ({}) difere do calculado ({}) para base {}: numero "
+                 "invalido, nada gravado. Informe o valor correto (13 digitos "
+                 "ou {}{}) e rode novamente.".format(
+                     dv_lido, dv_calculado, base_13, base_13, dv_calculado))
+            raise ValueError(
+                "DV lido ({}) difere do calculado ({}) para base {}; nada "
+                "gravado. Informe o valor correto (13 digitos ou {}{}) e rode "
+                "novamente".format(dv_lido, dv_calculado, base_13, base_13,
+                                   dv_calculado))
         tag_esperada = valor_upper   # preserva X maiusculo para gravacao
         _log("INFO", "Valor ja possui 14 digitos. DV verificado: {}".format(
             dv_calculado))
@@ -240,4 +263,23 @@ def valida_e_calcula_tag(valor_config, caminho_log, verbose, suprime_tela,
                  dv_calculado, tag_esperada))
 
     return tag_esperada, base_13
+
+
+def formata_bem(tag_esperada, digitos=14):
+    """
+    NAME: formata_bem
+    DESCRIPTION: v2.3.2. Devolve o numero de patrimonio no formato pedido
+                 para um destino (BIOS ou arquivo de configuracao): 14
+                 posicoes (13 digitos + DV, que pode ser "X") ou so os 13
+                 digitos, sem o DV. Recebe a tag de 14 posicoes ja validada
+                 por valida_e_calcula_tag.
+    PARAMETER: tag_esperada - tag de 14 posicoes
+               digitos      - 13 ou 14 (padrao 14)
+    RETURNS: str
+    """
+    if int(digitos) == 13:
+        return tag_esperada[:13]
+    if int(digitos) == 14:
+        return tag_esperada
+    raise ValueError("digitos deve ser 13 ou 14, recebido {}".format(digitos))
 

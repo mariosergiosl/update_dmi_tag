@@ -1,0 +1,36 @@
+# acesso.conf -- perfis de acesso do update_dmi_tag (opcao --acesso)
+#
+# Copie para acesso.conf, troque os valores e proteja:
+#     chmod 600 acesso.conf
+# A ferramenta recusa o arquivo se outros usuarios puderem le-lo.
+# Nunca copie o arquivo preenchido para zip, git, chamado ou e-mail.
+#
+# Cada secao [nome] e um perfil. Os perfis sao tentados na ordem em que
+# aparecem, maquina a maquina, e o primeiro que conseguir entrar e usado;
+# o resumo final mostra qual foi (coluna Acesso). Se a chave SSH do
+# runner ja estiver autorizada para algum perfil, esse perfil tem
+# preferencia, sem usar senha.
+#
+# Chaves de cada perfil:
+#   usuario    - obrigatorio
+#   senha      - senha SSH; usada so para autorizar a chave do runner
+#   senha_sudo - opcional. Vazio: tenta o sudo sem senha, depois com a
+#                senha do proprio perfil, depois com a senha dos perfis
+#                de root (padrao SUSE, "Defaults targetpw"). Preenchido:
+#                usa so este valor.
+#
+# Comentarios so em linha inteira, comecando com # ou ;. Tudo o que vem
+# depois do "=" e o valor, inclusive # e ;. Espacos no inicio e no fim do
+# valor sao descartados. Nao indente as linhas de valor.
+
+[operador]
+# Usuario pessoal do operador (ex.: linhas SLE 12 e 15).
+usuario = SEU_USUARIO
+senha = SENHA_DO_OPERADOR
+senha_sudo =
+
+[root]
+# Linhas sem acesso pessoal (ex.: SLE 11), com senha de root temporaria
+# trocada a cada lote. Atualize antes de cada execucao.
+usuario = root
+senha = SENHA_TEMPORARIA_DO_LOTE

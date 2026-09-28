@@ -17,7 +17,24 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-23 - v2.3.0 - pacote_kmp_para_kernel (nome do KMP pelo
+#                        flavor do osrelease); instala_modulo_remoto deixa
+#                        de copiar/instalar o pacote userspace (so
+#                        documentacao; o build x86_64 derrubava a
+#                        instalacao em host de 32 bits);
+#                        desinstala_modulo_remoto so remove o userspace se
+#                        presente (fim do ERROR falso ao final de cada
+#                        execucao).
 # REVISION: 2026-07-22 - v2.2.9 - alvo sempre volta ao estado em que foi
 #                        encontrado: instala_modulo_remoto agora remove
 #                        qualquer versao pre-existente de module_package/
@@ -98,7 +115,8 @@
 #                        prefixo em comum (ex. "5.3.18-22" bateria com
 #                        um hipotetico "...-5.3.18-220.rpm"). Trocado
 #                        para igualdade exata do nome do arquivo
-#                        completo. Cobertura em tests/test_regressao.py,
+#                        completo. Cobertura em
+#                        tests/test_environment_kmp.py,
 #                        TestInstalaModuloRemotoKernelMatching (exercita
 #                        a funcao real, nao mockada).
 # REVISION: 2026-07-20 - v2.2.8 - instala_modulo_remoto passa a casar o
@@ -228,6 +246,7 @@ import subprocess
 
 from .constants import (
     SYSMODULE_PATH, SYSFS_IFACE_PATH, MARCADOR_KMP_KERNEL_INCOMPATIVEL,
+    DEFAULT_MODULE_PACKAGE, MODULE_PACKAGE_PREFIX,
 )
 from .logging_utils import gravar_log, gravar_log_remoto
 from .ssh_utils import ssh_run, _filtra_banner, _scp_arquivo_com_erro
@@ -864,15 +883,38 @@ def _sha256_arquivo_local(caminho):
     return h.hexdigest()
 
 
+def pacote_kmp_para_kernel(osrelease):
+    """
+    NAME: pacote_kmp_para_kernel
+    DESCRIPTION: Nome do pacote KMP para um kernel, pelo flavor, que e o
+                 ultimo campo do osrelease ("5.14.21-150500.55.39-default"
+                 -> amibios-dmi-kmp-default, "3.0.101-71-pae" ->
+                 amibios-dmi-kmp-pae). Sem kernel legivel, ou sem flavor
+                 reconhecivel, devolve DEFAULT_MODULE_PACKAGE, o
+                 comportamento anterior a v2.3.0.
+    PARAMETER: osrelease - saida de /proc/sys/kernel/osrelease
+    RETURNS: str, nome do pacote KMP
+    """
+    kernel = (osrelease or "").strip()
+    if "-" not in kernel:
+        return DEFAULT_MODULE_PACKAGE
+    flavor = kernel.rsplit("-", 1)[1]
+    if not re.match(r"^[a-z][a-z0-9_]*$", flavor):
+        return DEFAULT_MODULE_PACKAGE
+    return MODULE_PACKAGE_PREFIX + flavor
+
+
 def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
                            userspace_package, caminho_log, verbose,
                            suprime_tela, caminho_log_local=""):
     """
     NAME: instala_modulo_remoto
-    DESCRIPTION: Copia via scp e instala via zypper local os RPMs do KMP
+    DESCRIPTION: Copia via scp e instala via zypper local o RPM do KMP
                  amibios_dmi (fork mariosergiosl/amibios_dmi, GPLv2, nao
                  e NDA) num host remoto, quando o pacote ainda nao
-                 estiver instalado. Localiza os arquivos em rpm_dir por
+                 estiver instalado. O pacote userspace nao e instalado
+                 desde a v2.3.0 (so documentacao; ver comentario no
+                 corpo). Localiza os arquivos em rpm_dir por
                  padrao de nome (a versao/git-date/kernel-alvo mudam a
                  cada build, ver rpm/README.md), copia para o home do
                  usuario SSH (scp nao precisa de sudo) e instala com
@@ -980,12 +1022,17 @@ def instala_modulo_remoto(ip, ssh_user, sudo_cmd, rpm_dir, module_package,
 
     caminho_kmp_local = candidatos_compat[-1]
     arquivos_para_copiar = [caminho_kmp_local]
+    # v2.3.0: o pacote userspace NAO e mais copiado nem instalado. Ele so
+    # contem documentacao, e o Mecanismo 2 nao depende dele. Instalado na
+    # mesma transacao do KMP, o build x86_64 derrubava a instalacao inteira
+    # em host de 32 bits (zypper rc=104 e o fallback 'rpm -i --nodeps'
+    # recusando com "intended for a x86_64 architecture"), deixando o KMP
+    # sem instalar. Reproduzido em VM SLE 11 SP4 i586 em 2026-09-23.
     if candidatos_userspace:
-        arquivos_para_copiar.append(candidatos_userspace[-1])
-    else:
         _log("DEBUG",
-             "RPM userspace ({}-*.rpm) nao encontrado em '{}'; "
-             "seguindo so com o KMP.".format(userspace_package, rpm_dir))
+             "RPM userspace {} presente em '{}' e ignorado (so "
+             "documentacao, nao necessario ao Mecanismo 2).".format(
+                 os.path.basename(candidatos_userspace[-1]), rpm_dir))
 
     def _limpa_rpms_copiados():
         """Remove do home do usuario SSH os .rpm que copiamos (em qualquer
@@ -1210,6 +1257,15 @@ def desinstala_modulo_remoto(ip, ssh_user, sudo_cmd, module_package,
 
     sucesso_total = True
     for pacote in (module_package, userspace_package):
+        # v2.3.0: o userspace nao e mais instalado pela ferramenta; so tenta
+        # remover se estiver presente (residuo de versao anterior). Antes a
+        # remocao era sempre tentada e, com o pacote ausente, gerava um
+        # ERROR falso no fim de toda execucao bem-sucedida (zypper rc=104,
+        # "package amibios-dmi is not installed").
+        if pacote == userspace_package and not verifica_pacote_rpm_remoto(
+                ip, ssh_user, sudo_cmd, pacote,
+                caminho_log, verbose, suprime_tela, caminho_log_local):
+            continue
         rc_rm, _, err_rm = ssh_run(
             ip, ssh_user,
             "{} zypper --non-interactive remove {}".format(sudo_cmd, pacote),
@@ -1240,8 +1296,8 @@ def desinstala_modulo_remoto(ip, ssh_user, sudo_cmd, module_package,
 
     if sucesso_total:
         _log("INFO",
-             "Alvo limpo: '{}' e '{}' removidos ao final da "
-             "execucao.".format(module_package, userspace_package))
+             "Alvo limpo: '{}' removido ao final da execucao.".format(
+                 module_package))
     return sucesso_total
 
 

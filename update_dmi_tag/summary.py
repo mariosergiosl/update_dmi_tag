@@ -13,7 +13,19 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - texto de INVALIDO cita o digito
+#                        verificador e orienta corrigir o valor e rodar de
+#                        novo.
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-23 - v2.3.0 - coluna Acesso (perfil usado no host) no
+#                        fim da tabela detalhada, para nao deslocar as
+#                        posicoes lidas pelos scripts de analise.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -192,7 +204,7 @@ _DESCRICOES_RESULTADO = (
     ("INCOMPATIVEL-HW", "Hardware incompativel: os Mecanismos 1 e 2 rejeitaram a gravacao com assinatura de firmware conhecida (ver log). Nao vale a pena repetir sem --allow-efi-fallback ou reflash de BIOS."),
     ("FALHOU",      "Bloqueio no firmware: ambos os mecanismos rejeitaram a gravacao."),
     ("PENDENTE",    "BEM_NUMERO ausente no BBconfig.conf. Aguardando provisionamento."),
-    ("INVALIDO",    "BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)."),
+    ("INVALIDO",    "BEM_NUMERO invalido (formato ou digito verificador). Corrigir o valor na lista e rodar novamente."),
     ("SEM-SUDO",    "Usuario sem privilegio sudo no host (ou --sudo-pass incorreto/ausente). Escrita nao tentada."),
     ("INACESSIVEL", "Host nao respondeu via SSH (timeout, desligado, ou bootstrap de chave falhou)."),
 )
@@ -310,12 +322,15 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
         "teste_escrita":  15,
         "bbconfig_sync":  17,
         "mac":            52,
+        # v2.3.0: perfil de acesso usado no host. No fim de proposito: os
+        # scripts de analise leem esta tabela pela posicao da coluna.
+        "acesso":         16,
     }
     CABECALHOS = [
         "IP", "Hostname", "Fabricante", "Modelo",
         "Fab.BIOS", "Versao BIOS", "SMBIOS", "WSMT",
         "Tag Antes", "BEM conf", "BEM usado", "Tag Depois",
-        "Resultado", "Teste Escrita", "BBconfig", "MAC",
+        "Resultado", "Teste Escrita", "BBconfig", "MAC", "Acesso",
     ]
 
     div = "+-" + "-+-".join("-" * (v + 2) for v in C.values()) + "-+"
@@ -463,7 +478,7 @@ def monta_tabela_resumo(registros, caminho_log_local, verbose, suprime_tela,
     _escreve("  Incompativel (INCOMPATIVEL-HW): {:3d}  -- Mecanismos 1/2 rejeitados com assinatura de firmware conhecida".format(incompativel_hw))
     _escreve("  Sem privilegio (SEM-SUDO)  : {:3d}  -- usuario sem sudo ou --sudo-pass incorreto/ausente".format(sem_sudo))
     _escreve("  BEM pendente (PENDENTE)    : {:3d}  -- BEM_NUMERO ausente no BBconfig.conf do host".format(pendente))
-    _escreve("  BEM invalido (INVALIDO)    : {:3d}  -- BEM_NUMERO com formato invalido (esperado 13 ou 14 digitos)".format(invalido))
+    _escreve("  BEM invalido (INVALIDO)    : {:3d}  -- BEM_NUMERO invalido (formato ou DV); corrigir o valor e rodar novamente".format(invalido))
     _escreve("  Inacessivel (INACESSIVEL)  : {:3d}  -- host nao respondeu via SSH (desligado, rede, bootstrap)".format(inacessivel))
     if outros > 0:
         _escreve("  Outros (status desconhecido): {:3d}  -- status nao mapeado acima".format(outros))

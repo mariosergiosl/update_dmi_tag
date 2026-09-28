@@ -16,7 +16,23 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - habilita_ssh_rsa_legado: com cliente
+#                        OpenSSH 8.8 ou mais novo, aceita tambem a
+#                        assinatura ssh-rsa (SHA-1), a unica que servidores
+#                        anteriores ao 7.2 conhecem (SLE 11 SP3 e SP4);
+#                        versao_servidor_ssh le o banner do sshd para
+#                        diagnostico. scp passa a usar as mesmas opcoes
+#                        extras do ssh.
+# REVISION: 2026-09-23 - v2.3.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -85,11 +101,81 @@
 # =======================================================================
 
 import os
+import re
 import socket
 import subprocess
 
 from .constants import SSH_OPTS
 from .logging_utils import gravar_log_remoto
+
+# v2.3.1: opcoes acrescentadas em tempo de execucao ao ssh e ao scp (ver
+# habilita_ssh_rsa_legado). Lista compartilhada, alterada so no inicio da
+# execucao, antes das threads do --parallel.
+SSH_OPTS_EXTRA = []
+_OPCAO_SSH_RSA = "PubkeyAcceptedAlgorithms=+ssh-rsa"
+
+
+def versao_openssh(texto):
+    """
+    NAME: versao_openssh
+    DESCRIPTION: Extrai a versao (maior, menor) de um texto no formato do
+                 OpenSSH, como a saida de 'ssh -V' ('OpenSSH_9.6p1, ...')
+                 ou o banner do servidor ('SSH-2.0-OpenSSH_6.2').
+    PARAMETER: texto - texto a analisar
+    RETURNS: tuple(int, int) ou None se nao for OpenSSH
+    """
+    m = re.search(r"OpenSSH_(\d+)\.(\d+)", texto or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def habilita_ssh_rsa_legado():
+    """
+    NAME: habilita_ssh_rsa_legado
+    DESCRIPTION: O cliente OpenSSH 8.8 ou mais novo recusa por padrao a
+                 assinatura ssh-rsa (SHA-1), e servidores anteriores ao
+                 OpenSSH 7.2 so conhecem essa (SLE 11 SP3 tem 6.2, SP4 tem
+                 6.6). Sem ela a chave RSA nao autentica nesses alvos.
+                 Acrescenta PubkeyAcceptedAlgorithms=+ssh-rsa as opcoes do
+                 ssh e do scp; o '+' so amplia a lista, e servidores
+                 modernos continuam negociando rsa-sha2. Idempotente.
+                 Chamada uma vez, no inicio do modo remoto.
+    PARAMETER: nenhum
+    RETURNS: str, versao do cliente e a decisao, para o log
+    """
+    try:
+        r = subprocess.run(["ssh", "-V"], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, universal_newlines=True,
+                           timeout=10, check=False)
+        texto = (r.stderr or r.stdout or "").strip()
+    except Exception as e:
+        return "cliente ssh nao identificado ({}); ssh-rsa inalterado".format(e)
+    versao = versao_openssh(texto)
+    if versao is None or versao < (8, 8):
+        return "{}; ssh-rsa ja aceito pelo cliente".format(texto or "?")
+    if _OPCAO_SSH_RSA not in SSH_OPTS_EXTRA:
+        SSH_OPTS_EXTRA.extend(["-o", _OPCAO_SSH_RSA])
+        SSH_OPTS.extend(["-o", _OPCAO_SSH_RSA])
+    return "{}; ssh-rsa habilitado para alvos com OpenSSH antigo".format(texto)
+
+
+def versao_servidor_ssh(ip, porta=22, timeout=3.0):
+    """
+    NAME: versao_servidor_ssh
+    DESCRIPTION: Le o banner que o sshd envia ao abrir a conexao, sem
+                 autenticar (ex.: 'SSH-2.0-OpenSSH_6.2'). Usado so para
+                 diagnostico no log.
+    PARAMETER: ip      - endereco IP do host
+               porta   - porta TCP (padrao: 22)
+               timeout - tempo limite em segundos
+    RETURNS: str, banner sem quebra de linha, ou "" se nao lido
+    """
+    try:
+        with socket.create_connection((ip, porta), timeout=timeout) as s:
+            s.settimeout(timeout)
+            dados = s.recv(256).decode("ascii", "replace")
+        return dados.splitlines()[0].strip() if dados else ""
+    except Exception:
+        return ""
 
 
 def ssh_run(ip, ssh_user, comando, timeout=30):
@@ -256,6 +342,7 @@ def scp_arquivo(ip, ssh_user, caminho_local, caminho_remoto):
                 "-o", "ConnectTimeout=10",
                 "-o", "BatchMode=yes",
                 "-o", "StrictHostKeyChecking=no",
+            ] + SSH_OPTS_EXTRA + [
                 caminho_local,
                 "{}@{}:{}".format(ssh_user, ip, caminho_remoto),
             ],
@@ -296,6 +383,7 @@ def _scp_arquivo_com_erro(ip, ssh_user, caminho_local, caminho_remoto):
                 "-o", "ConnectTimeout=10",
                 "-o", "BatchMode=yes",
                 "-o", "StrictHostKeyChecking=no",
+            ] + SSH_OPTS_EXTRA + [
                 caminho_local,
                 "{}@{}:{}".format(ssh_user, ip, caminho_remoto),
             ],

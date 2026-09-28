@@ -15,7 +15,24 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - sincronizacao do arquivo de configuracao:
+#                        variavel ausente passa a ser acrescentada ao final
+#                        (antes o sed nao fazia nada e a confirmacao
+#                        falhava); chattr +i do original so volta depois da
+#                        confirmacao ou do rollback (antes o rollback falhava
+#                        com Operation not permitted); grep -a na leitura e
+#                        na confirmacao (arquivo com bytes nao texto devolvia
+#                        'Binary file ... matches' como valor).
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-23 - v2.3.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -84,6 +101,7 @@
 #
 # =======================================================================
 
+import base64
 import os
 import subprocess
 import time
@@ -167,7 +185,9 @@ def le_valor_configuracao_remoto(ip, ssh_user, caminho_config, nome_var,
         gravar_log_remoto(ip, ssh_user, sudo_cmd, caminho_log, nivel, msg,
                           caminho_log_local, verbose, suprime_tela)
 
-    cmd = "grep '^{}=' {} 2>/dev/null | cut -d= -f2 | tr -d '\"'".format(
+    # v2.3.3: grep -a, para o arquivo com bytes nao texto nao devolver
+    # "Binary file ... matches" no lugar do valor.
+    cmd = "grep -a '^{}=' {} 2>/dev/null | cut -d= -f2 | tr -d '\"'".format(
         nome_var, caminho_config)
     _, stdout, _ = ssh_run(ip, ssh_user, cmd, timeout=10)
     valor_remoto = stdout.strip()
@@ -322,33 +342,55 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
                 "{} chattr -i {}".format(sudo_cmd, caminho_config),
                 timeout=10)
 
-    # 6. Edita o arquivo original via sed -i
-    # Usa aspas simples no shell remoto; nome_var e bem_usado sao
-    # numericos/identificadores sem caracteres especiais de sed.
-    sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
-    rc_sed, _, err_sed = ssh_run(
-        ip, ssh_user,
-        "{} sed -i '{}' {}".format(sudo_cmd, sed_expr, caminho_config),
-        timeout=15)
-    err_sed_limpo = _filtra_banner(err_sed or "").strip()
+    # v2.3.3: o chattr +i do arquivo original so volta DEPOIS da confirmacao
+    # ou do rollback. Antes voltava logo apos o sed, e um rollback posterior
+    # falhava com "Operation not permitted" ao copiar sobre arquivo imutavel.
+    def _restaura_imutavel():
+        if original_imutavel:
+            ssh_run(ip, ssh_user,
+                    "{} chattr +i {}".format(sudo_cmd, caminho_config),
+                    timeout=10)
+            _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
 
-    # Se o arquivo era imutavel, restaura o atributo independente do resultado
-    if original_imutavel:
-        ssh_run(ip, ssh_user,
-                "{} chattr +i {}".format(sudo_cmd, caminho_config),
-                timeout=10)
-        _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
+    # 6. Edita o arquivo original.
+    # v2.3.3: se a variavel nao existe no arquivo, o sed de substituicao nao
+    # faria nada; a linha passa a ser acrescentada ao final (mesmo formato
+    # VAR="valor"). grep -a: o arquivo pode ter bytes que o grep trataria
+    # como binario.
+    rc_existe, _, _ = ssh_run(
+        ip, ssh_user,
+        "{} grep -a -q '^{}=' {}".format(sudo_cmd, nome_var, caminho_config),
+        timeout=10)
+    if rc_existe == 1:
+        _log("INFO",
+             "Variavel {} ausente em {}: acrescentando a linha ao final.".format(
+                 nome_var, caminho_config))
+        linha_b64 = base64.b64encode(
+            '{}="{}"\n'.format(nome_var, bem_usado).encode("utf-8")).decode("ascii")
+        cmd_edita = (
+            "{0} sh -c '[ -z \"$(tail -c1 {1})\" ] || echo >> {1}; "
+            "echo {2} | base64 -d >> {1}'").format(
+                sudo_cmd, caminho_config, linha_b64)
+    else:
+        # Usa aspas simples no shell remoto; nome_var e bem_usado sao
+        # numericos/identificadores sem caracteres especiais de sed.
+        sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
+        cmd_edita = "{} sed -i '{}' {}".format(sudo_cmd, sed_expr, caminho_config)
+    rc_sed, _, err_sed = ssh_run(ip, ssh_user, cmd_edita, timeout=15)
+    err_sed_limpo = _filtra_banner(err_sed or "").strip()
 
     if rc_sed != 0:
         _log("ERROR",
              "sed -i falhou em {}: {}. Tentando rollback a partir do backup.".format(
                  caminho_config, err_sed_limpo or "sem detalhe"))
-        return _rollback_bbconfig(
+        resultado = _rollback_bbconfig(
             ip, ssh_user, sudo_cmd, caminho_config, backup_path,
             chattr_ok, "FALHOU-sed", _log)
+        _restaura_imutavel()
+        return resultado
 
     # 7. Confirma o novo valor
-    cmd_confirma = "grep '^{}=' {} 2>/dev/null | cut -d= -f2 | tr -d '\"'".format(
+    cmd_confirma = "grep -a '^{}=' {} 2>/dev/null | cut -d= -f2 | tr -d '\"'".format(
         nome_var, caminho_config)
     _, stdout_confirma, _ = ssh_run(ip, ssh_user, cmd_confirma, timeout=10)
     valor_confirmado = stdout_confirma.strip()
@@ -357,10 +399,13 @@ def sincroniza_bbconfig_remoto(ip, ssh_user, sudo_cmd, caminho_config, nome_var,
         _log("ERROR",
              "Confirmacao pos-sed falhou: esperado '{}', encontrado '{}'. "
              "Tentando rollback.".format(bem_usado, valor_confirmado))
-        return _rollback_bbconfig(
+        resultado = _rollback_bbconfig(
             ip, ssh_user, sudo_cmd, caminho_config, backup_path,
             chattr_ok, "FALHOU-confirmacao", _log)
+        _restaura_imutavel()
+        return resultado
 
+    _restaura_imutavel()
     _log("INFO",
          "BBconfig.conf atualizado: {}={} -> {}={}. Backup: {}".format(
              nome_var, bem_conf or "PENDENTE", nome_var, bem_usado, backup_path))
@@ -497,13 +542,35 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
              "para sincronizacao.")
         _run(["sudo", "chattr", "-i", caminho_config], timeout=10)
 
-    sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
-    rc_sed, _, err_sed = _run(["sudo", "sed", "-i", sed_expr, caminho_config])
+    # v2.3.3: variavel ausente passa a ser acrescentada ao final do arquivo,
+    # em vez de o sed de substituicao nao fazer nada (mesma logica do remoto).
+    variavel_existe = False
+    try:
+        with open(caminho_config, "r", encoding="utf-8", errors="ignore") as f:
+            variavel_existe = any(
+                linha.strip().startswith("{}=".format(nome_var)) for linha in f)
+    except Exception:
+        variavel_existe = True   # sem leitura, mantem o comportamento anterior
+    if variavel_existe:
+        sed_expr = "s/^{0}=.*/{0}=\"{1}\"/".format(nome_var, bem_usado)
+        rc_sed, _, err_sed = _run(["sudo", "sed", "-i", sed_expr, caminho_config])
+    else:
+        _log("INFO",
+             "Variavel {} ausente em {}: acrescentando a linha ao final.".format(
+                 nome_var, caminho_config))
+        linha_b64 = base64.b64encode(
+            '{}="{}"\n'.format(nome_var, bem_usado).encode("utf-8")).decode("ascii")
+        rc_sed, _, err_sed = _run(
+            ["sudo", "sh", "-c",
+             "[ -z \"$(tail -c1 {0})\" ] || echo >> {0}; "
+             "echo {1} | base64 -d >> {0}".format(caminho_config, linha_b64)])
 
-    # Se o arquivo era imutavel, restaura o atributo independente do resultado
-    if original_imutavel:
-        _run(["sudo", "chattr", "+i", caminho_config], timeout=10)
-        _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
+    # v2.3.3: o chattr +i do original so volta depois da confirmacao ou do
+    # rollback (antes voltava aqui, e o rollback falhava no arquivo imutavel).
+    def _restaura_imutavel():
+        if original_imutavel:
+            _run(["sudo", "chattr", "+i", caminho_config], timeout=10)
+            _log("DEBUG", "chattr +i restaurado em {}.".format(caminho_config))
 
     def _rollback_local(motivo_base):
         if chattr_ok:
@@ -525,7 +592,9 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
     if rc_sed != 0:
         _log("ERROR", "sed -i falhou em {}: {}. Tentando rollback.".format(
             caminho_config, (err_sed or "").strip()))
-        return _rollback_local("FALHOU-sed")
+        resultado = _rollback_local("FALHOU-sed")
+        _restaura_imutavel()
+        return resultado
 
     # Confirma
     try:
@@ -539,14 +608,19 @@ def sincroniza_bbconfig_local(caminho_config, nome_var, bem_conf, bem_usado,
     except Exception as e:
         _log("ERROR", "Falha ao reabrir {} para confirmacao: {}. Tentando rollback.".format(
             caminho_config, e))
-        return _rollback_local("FALHOU-confirmacao")
+        resultado = _rollback_local("FALHOU-confirmacao")
+        _restaura_imutavel()
+        return resultado
 
     if valor_confirmado != bem_usado:
         _log("ERROR",
              "Confirmacao pos-sed falhou: esperado '{}', encontrado '{}'. "
              "Tentando rollback.".format(bem_usado, valor_confirmado))
-        return _rollback_local("FALHOU-confirmacao")
+        resultado = _rollback_local("FALHOU-confirmacao")
+        _restaura_imutavel()
+        return resultado
 
+    _restaura_imutavel()
     _log("INFO",
          "BBconfig.conf atualizado: {}={} -> {}={}. Backup: {}".format(
              nome_var, bem_conf or "PENDENTE", nome_var, bem_usado, backup_path))

@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.2.9
+Version:        2.3.3
 Release:        1
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -64,7 +64,7 @@ cp -a rpm %{buildroot}/opt/%{name}/
 # entao nao existem na tarball buscada do GitHub pelo _service/tar_scm.
 # Distribuidos apenas pelo zip interno (update_dmi_tag-vX.Y.Z-minimal.zip),
 # nunca pelo RPM publico.
-cp -a README.md LICENSE.md ErrCode.txt survey_asset_tag.bash \
+cp -a README.md LICENSE.md ErrCode.txt survey_asset_tag.bash acesso.conf.example \
     %{buildroot}/opt/%{name}/
 
 # Limpeza de artefatos de desenvolvimento que nao devem ir no pacote
@@ -90,6 +90,96 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Wed Sep 30 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-1
+- Padrao de --bbconfig-digitos volta a 14, igual ao de --bios-digitos,
+  conforme a definicao revista em 30/09/2026; sem nova versao do codigo.
+- KMPs dos kernels 5.3.18-24.67, 6.4.0-150600.23.53 e
+  6.4.0-150600.23.78 acrescentados a rpm/ (190 no total).
+
+* Mon Sep 28 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-0
+- Padrao de --bbconfig-digitos passa a 13, o formato gravado pelo
+  gestor oficial do arquivo de configuracao; --bios-digitos continua 14.
+- Arquivo de configuracao: variavel ausente passa a ser acrescentada;
+  chattr +i do original so volta depois da confirmacao ou do rollback;
+  grep -a na leitura e na confirmacao.
+- Numero de 14 posicoes com digito verificador divergente passa a
+  resultar INVALIDO, sem gravar; o operador corrige o valor e roda de novo.
+
+* Mon Sep 28 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.2-0
+- Novas opcoes --bios-digitos e --bbconfig-digitos (13 ou 14, padrao
+  14), independentes: formato do numero gravado na BIOS e no arquivo de
+  configuracao do equipamento. Com 13, o destino recebe a base sem o
+  digito verificador; a validacao continua com as 14 posicoes. A trava
+  OK-ja-correto compara com o formato pedido para a BIOS. O cabecalho do
+  log registra os dois formatos. Suite de testes: 129 -> 141.
+
+* Thu Sep 24 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.1-0
+- Correcoes do primeiro lote de campo da 2.3.0 (SLE 11). O bootstrap
+  passa a distribuir chave RSA, gerada quando o usuario so tem ed25519:
+  o OpenSSH 6.2 do SLE 11 SP3 nao conhece ed25519, aceitava a chave no
+  ssh-copy-id e recusava a conexao. Com cliente OpenSSH 8.8 ou mais novo,
+  ssh e scp aceitam tambem a assinatura ssh-rsa, a unica dos servidores
+  anteriores ao 7.2 (SLE 11 SP3 e SP4).
+- Perfil que entra mas nao confirma o sudo passa a tentar os perfis
+  seguintes do arquivo de acesso, em vez de deixar o host SEM-SUDO.
+- O log dentro do alvo (/var/log/update_dmi_tag.log) volta a ser gravado:
+  o modo remoto trocava o caminho por um do runner, que nao existe no
+  alvo. A linha segue em base64, fora do stdin do sudo por senha.
+- Remove ao final as pastas ~/.ssh/ssh-copy-id.* deixadas pelo
+  ssh-copy-id interrompido na execucao; comparacao de BEM sem distincao
+  entre x e X no digito verificador.
+- KMPs novos da linha 11: 3.0.101-0.47.71.1.9861.8.PTF-pae e
+  3.0.76-0.11-pae (187 no total). Suite de testes: 105 -> 129.
+
+* Wed Sep 23 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.0-0
+- Um unico comando para todo o parque: nova opcao --acesso, com um
+  arquivo de perfis de acesso (usuario, senha e senha_sudo opcional por
+  perfil). Os perfis sao tentados em ordem, host a host; o primeiro que
+  entrar e usado, e o resumo mostra qual foi (coluna Acesso, no fim da
+  tabela). Permite misturar no mesmo lote a linha SLE 11, acessada como
+  root com senha temporaria, e as linhas SLE 12/15, acessadas pelo
+  operador. O arquivo e recusado sem permissao 600. Sem --acesso, o
+  comportamento anterior fica intacto.
+- Sudo cobre os tres comportamentos possiveis do host: sem senha, com a
+  senha do proprio usuario e com a senha do root (padrao SUSE,
+  Defaults targetpw).
+- --module-package passa a ser automatico: o nome do KMP vem do flavor
+  do kernel de cada host (amibios-dmi-kmp-default, amibios-dmi-kmp-pae).
+- O pacote userspace amibios-dmi (so documentacao) deixa de ser
+  instalado. Na mesma pasta do KMP, o build x86_64 derrubava a
+  instalacao em host de 32 bits (linha SLE 11), deixando o KMP sem
+  instalar. Tambem some o ERROR falso de remocao desse pacote no fim de
+  toda execucao bem-sucedida.
+- Recusa de senha com novo prompt (ex.: SLE 11 com usuario inexistente)
+  passa a ser detectada na hora; antes custava 30 s de timeout por host.
+- Fim do aviso falso de divergencia de BEM entre 13 e 14 digitos do
+  mesmo patrimonio.
+- Ajuda do --test-write corrigida: tag virgem e testada com o BEM e
+  restaurada, nao pulada.
+- Testes: 67 para 105 casos; compatibilidade com Python 3.6 (o runner
+  real), onde 7 testes falhavam por usar recurso do mock do 3.8+.
+- Validado em bancada com lote misto SLE 11 SP4 i586, SLE 12 SP5 e
+  SLE 15 SP6 num unico comando.
+
+* Mon Aug 10 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.10-0
+- Corrige divergencia entre o valor gravado na BIOS e o gravado no
+  arquivo de configuracao do equipamento. O modo remoto enviava ao
+  arquivo o valor cru da origem (13 digitos quando a origem tinha 13),
+  enquanto a BIOS recebia sempre a tag de 14 digitos. O modo standalone
+  ja gravava 14. Resultado em campo: equipamentos com a BIOS correta e o
+  arquivo com um digito a menos, aparecendo como divergentes em qualquer
+  inventario que compare as duas fontes. Agora as duas pontas recebem o
+  mesmo valor de 14 digitos.
+- Ao reexecutar sobre um equipamento nessa situacao, a trava global
+  identifica que a BIOS ja esta correta, NAO executa nenhum mecanismo e
+  NAO reinicia nada; apenas o arquivo e corrigido, com backup.
+- Cobertura de KMP ampliada para 165 arquivos: novos builds para os
+  kernels de manutencao 6.4.0-150600.23.7 (SLE 15 SP6) e 5.3.18-24.52
+  (SLE 15 SP2), compilados a partir dos headers exatos.
+- Suite de testes reorganizada em um arquivo por modulo testado e
+  ampliada de 51 para 67 casos, incluindo a precedencia das fontes do
+  numero de patrimonio e o formato gravado no arquivo de configuracao.
+
 * Wed Jul 22 2026 Mario Luz <mario.mssl@gmail.com> - 2.2.9-1
 - Validacao de campo revelou dois problemas: o regex de
   confirma_kmp_kernel_correto_remoto so reconhecia o formato de versao

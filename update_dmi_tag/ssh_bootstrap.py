@@ -21,7 +21,30 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - bootstrap passa a usar chave RSA, gerada
+#                        se o usuario so tiver ed25519: o OpenSSH anterior
+#                        ao 6.5 (SLE 11 SP3 tem 6.2) nao conhece ed25519,
+#                        aceitava a chave no ssh-copy-id e depois recusava a
+#                        conexao. A ed25519 existente continua sendo
+#                        oferecida pelo cliente (sem -i), entao alvos onde
+#                        ela ja esta autorizada seguem funcionando. Falha
+#                        de reconexao registra o banner do servidor.
+#                        limpa_temporarios_ssh_copy_id remove as pastas
+#                        ~/.ssh/ssh-copy-id.* deixadas pelo ssh-copy-id
+#                        interrompido durante a execucao.
+# REVISION: 2026-09-23 - v2.3.0 - parametro nivel_falha nas recusas de
+#                        acesso (WARNING quando outro perfil ainda sera
+#                        tentado); novo prompt de senha apos o envio passa
+#                        a ser tratado como recusa imediata (antes esperava
+#                        o timeout de 30 s por host, ex. SLE 11 com usuario
+#                        inexistente), sem reenviar a senha.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -93,13 +116,15 @@
 # =======================================================================
 
 import os
+import re
+import shutil
 import subprocess
 import threading
 import time
 
 from .constants import DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_ED25519
 from .logging_utils import gravar_log
-from .ssh_utils import testa_conexao_ssh
+from .ssh_utils import testa_conexao_ssh, versao_servidor_ssh
 
 # Protege a checagem+geracao da chave SSH local (recurso compartilhado
 # entre todos os hosts) contra corrida entre threads do --parallel: sem
@@ -134,21 +159,25 @@ def _localiza_chave_ssh_local():
     return None, None
 
 
-def _gera_chave_ssh_local(caminho_log_local, verbose):
+def _gera_chave_ssh_local(caminho_log_local, verbose, tipo="ed25519"):
     """
     NAME: _gera_chave_ssh_local
-    DESCRIPTION: Gera uma chave ed25519 sem passphrase no home do usuario
-                 atual, de forma totalmente nao-interativa. Cria o
-                 diretorio ~/.ssh com permissoes 0700 se necessario.
-                 Usa ssh-keygen do sistema (parte do openssh-clients).
+    DESCRIPTION: Gera uma chave sem passphrase no home do usuario atual,
+                 de forma totalmente nao-interativa. Cria o diretorio
+                 ~/.ssh com permissoes 0700 se necessario. Usa ssh-keygen
+                 do sistema (parte do openssh-clients).
     PARAMETER: caminho_log_local - log local consolidado para registro
                verbose           - se True, imprime no stdout
+               tipo              - "ed25519" (padrao) ou "rsa" (v2.3.1,
+                                   4096 bits)
     RETURNS: tuple(str, str), (caminho_privada, caminho_publica) em sucesso,
              ou (None, None) em caso de falha.
     """
     diretorio_ssh = os.path.expanduser("~/.ssh")
-    caminho_priv  = DEFAULT_SSH_KEY_ED25519
-    caminho_pub   = DEFAULT_SSH_KEY_ED25519 + ".pub"
+    base          = DEFAULT_SSH_KEY_RSA if tipo == "rsa" else DEFAULT_SSH_KEY_ED25519
+    caminho_priv  = base
+    caminho_pub   = base + ".pub"
+    tipo_args     = ["-t", "rsa", "-b", "4096"] if tipo == "rsa" else ["-t", "ed25519"]
 
     try:
         if not os.path.isdir(diretorio_ssh):
@@ -164,7 +193,7 @@ def _gera_chave_ssh_local(caminho_log_local, verbose):
             [
                 "ssh-keygen",
                 "-q",
-                "-t", "ed25519",
+            ] + tipo_args + [
                 "-N", "",
                 "-f", caminho_priv,
                 "-C", "update_dmi_tag bootstrap",
@@ -200,9 +229,69 @@ def _gera_chave_ssh_local(caminho_log_local, verbose):
         return None, None
 
     gravar_log(caminho_log_local, "INFO",
-               "Bootstrap SSH: chave ed25519 gerada em {}".format(caminho_priv),
+               "Bootstrap SSH: chave {} gerada em {}".format(tipo, caminho_priv),
                verbose, False)
     return caminho_priv, caminho_pub
+
+
+def _obtem_chave_para_bootstrap(caminho_log_local, verbose):
+    """
+    NAME: _obtem_chave_para_bootstrap
+    DESCRIPTION: v2.3.1. Devolve a chave a distribuir pelo ssh-copy-id,
+                 sempre RSA quando possivel: gera id_rsa se o usuario so
+                 tiver ed25519 ou nenhuma chave. ed25519 nao existe no
+                 OpenSSH anterior ao 6.5 (SLE 11 SP3), e RSA funciona em
+                 todas as versoes do parque. Se a geracao da RSA falhar,
+                 usa a chave que ja existir. Chamada sob
+                 _lock_chave_ssh_local.
+    PARAMETER: caminho_log_local - log local consolidado
+               verbose           - se True, imprime no stdout
+    RETURNS: tuple(str, str), (privada, publica) ou (None, None)
+    """
+    if os.path.isfile(DEFAULT_SSH_KEY_RSA) and os.path.isfile(DEFAULT_SSH_KEY_RSA + ".pub"):
+        return DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_RSA + ".pub"
+    priv, pub = _gera_chave_ssh_local(caminho_log_local, verbose, tipo="rsa")
+    if priv is not None:
+        return priv, pub
+    priv, pub = _localiza_chave_ssh_local()
+    if priv is None:
+        priv, pub = _gera_chave_ssh_local(caminho_log_local, verbose)
+    return priv, pub
+
+
+_RE_TEMP_SSH_COPY_ID = re.compile(r"^ssh-copy-id\.[A-Za-z0-9]{10}$")
+
+
+def limpa_temporarios_ssh_copy_id(desde):
+    """
+    NAME: limpa_temporarios_ssh_copy_id
+    DESCRIPTION: v2.3.1. O ssh-copy-id cria ~/.ssh/ssh-copy-id.XXXXXXXXXX
+                 e so a remove ao terminar normalmente; interrompido (ex.:
+                 recusa de senha), a pasta fica. Remove as pastas com esse
+                 padrao de nome modificadas a partir de 'desde' (inicio da
+                 execucao). Pastas mais antigas, de outras execucoes, nao
+                 sao tocadas. Chamar so depois de todos os hosts, nunca
+                 durante o --parallel.
+    PARAMETER: desde - epoch (float) do inicio da execucao
+    RETURNS: int, quantidade de pastas removidas
+    """
+    diretorio_ssh = os.path.dirname(DEFAULT_SSH_KEY_RSA)
+    removidas = 0
+    try:
+        nomes = os.listdir(diretorio_ssh)
+    except Exception:
+        return 0
+    for nome in nomes:
+        caminho = os.path.join(diretorio_ssh, nome)
+        try:
+            if (_RE_TEMP_SSH_COPY_ID.match(nome) and os.path.isdir(caminho)
+                    and not os.path.islink(caminho)
+                    and os.path.getmtime(caminho) >= desde):
+                shutil.rmtree(caminho)
+                removidas += 1
+        except Exception:
+            continue
+    return removidas
 
 
 def _resolve_ssh_pass(args):
@@ -242,7 +331,7 @@ def _resolve_ssh_pass(args):
 
 
 def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
-                            caminho_log_local, verbose):
+                            caminho_log_local, verbose, nivel_falha="ERROR"):
     """
     NAME: _ssh_copy_id_com_senha
     DESCRIPTION: Distribui a chave publica para o host remoto via
@@ -263,6 +352,9 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
                caminho_chave_pub   - caminho da chave publica local
                caminho_log_local   - log local consolidado
                verbose             - se True, imprime no stdout
+               nivel_falha         - nivel de log das recusas de acesso
+                                     (v2.3.0; WARNING quando outro perfil
+                                     ainda sera tentado)
     RETURNS: bool, True se ssh-copy-id retornou rc=0, False caso
              contrario (timeout, autenticacao falhou, binario ausente,
              etc.). Em falha, registra ERROR identificando a etapa.
@@ -274,7 +366,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
     import errno
 
     if not senha:
-        gravar_log(caminho_log_local, "ERROR",
+        gravar_log(caminho_log_local, nivel_falha,
                    "[{}] Bootstrap SSH: nenhuma senha SSH disponivel "
                    "(--ssh-pass, SSH_PASS env ou --ssh-pass-file)".format(ip),
                    verbose, False)
@@ -327,7 +419,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
         while True:
             decorrido = time.time() - inicio
             if decorrido >= timeout_total:
-                gravar_log(caminho_log_local, "ERROR",
+                gravar_log(caminho_log_local, nivel_falha,
                            "[{}] Bootstrap SSH: ssh-copy-id timeout "
                            "({:.0f} s)".format(ip, timeout_total),
                            verbose, False)
@@ -382,11 +474,36 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
 
             # Detecta prompt de senha (case-insensitive, varias variacoes)
             buffer_lower = buffer_saida.lower()
-            if (not senha_enviada) and (
+            pediu_senha = (
                 "password:" in buffer_lower
                 or "password for" in buffer_lower
                 or "'s password" in buffer_lower
-            ):
+            )
+            # v2.3.0: prompt de senha DEPOIS de ja ter enviado a senha e
+            # recusa (o sshd pede de novo em vez de fechar, comum com
+            # keyboard-interactive, ex. SLE 11 com usuario inexistente).
+            # Antes a funcao esperava o timeout de 30 s a cada host assim;
+            # agora encerra na hora, sem reenviar a senha.
+            if senha_enviada and pediu_senha:
+                gravar_log(caminho_log_local, nivel_falha,
+                           "[{}] Bootstrap SSH: senha recusada para '{}' "
+                           "(o servidor pediu a senha de novo)".format(
+                               ip, ssh_user),
+                           verbose, False)
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+                try:
+                    os.waitpid(pid, 0)
+                except Exception:
+                    pass
+                return False
+            if (not senha_enviada) and pediu_senha:
                 try:
                     os.write(fd, (senha + "\n").encode("utf-8"))
                     senha_enviada = True
@@ -404,7 +521,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
                 or "too many authentication failures" in buffer_lower
                 or "no supported authentication methods" in buffer_lower
             ):
-                gravar_log(caminho_log_local, "ERROR",
+                gravar_log(caminho_log_local, nivel_falha,
                            "[{}] Bootstrap SSH: ssh-copy-id autenticacao "
                            "rejeitada (senha incorreta ou SSH bloqueado)".format(ip),
                            verbose, False)
@@ -454,7 +571,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
     else:
         # Captura os ultimos 200 caracteres da saida para log de falha
         cauda = ("".join(saida_completa))[-200:].replace("\n", " | ").strip()
-        gravar_log(caminho_log_local, "ERROR",
+        gravar_log(caminho_log_local, nivel_falha,
                    "[{}] Bootstrap SSH: ssh-copy-id encerrou com rc={} "
                    "(cauda: {})".format(ip, rc, cauda or "vazio"),
                    verbose, False)
@@ -462,13 +579,14 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
 
 
 def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
-                              caminho_log_local, verbose):
+                              caminho_log_local, verbose, nivel_falha="ERROR"):
     """
     NAME: prepara_autenticacao_ssh
     DESCRIPTION: Orquestra o bootstrap de autenticacao SSH para um host.
                  Fluxo em ordem:
-                   1. Localiza chave SSH local (RSA ou ed25519).
-                   2. Se nenhuma existir, gera id_ed25519 sem passphrase.
+                   1. Obtem a chave RSA local (v2.3.1); gera id_rsa se so
+                      houver ed25519 ou nenhuma chave.
+                   2. Sem RSA possivel, usa a chave que existir.
                    3. Tenta conexao via chave (testa_conexao_ssh).
                       Caminho feliz: retorna True sem mais nenhuma acao.
                    4. Se a chave nao esta distribuida e ha senha SSH
@@ -488,6 +606,9 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
                ssh_pass          - senha SSH efetiva (pode ser vazia)
                caminho_log_local - log local consolidado
                verbose           - se True, imprime no stdout
+               nivel_falha       - nivel de log das recusas de acesso
+                                   (v2.3.0; WARNING quando outro perfil
+                                   ainda sera tentado)
     RETURNS: bool, True se o host esta acessivel via chave apos o
              bootstrap. False indica falha definitiva (caller marca
              como INACESSIVEL).
@@ -497,11 +618,11 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
     # hosts/threads (ver _lock_chave_ssh_local acima) -- sem isso, com
     # --parallel > 1 e nenhuma chave previa, duas threads podem tentar
     # gerar a mesma chave ao mesmo tempo e uma falha por corrida.
+    # v2.3.1: a chave distribuida e sempre RSA (ver
+    # _obtem_chave_para_bootstrap).
     with _lock_chave_ssh_local:
-        chave_priv, chave_pub = _localiza_chave_ssh_local()
-        if chave_priv is None:
-            chave_priv, chave_pub = _gera_chave_ssh_local(
-                caminho_log_local, verbose)
+        chave_priv, chave_pub = _obtem_chave_para_bootstrap(
+            caminho_log_local, verbose)
 
     if chave_priv is None:
         gravar_log(caminho_log_local, "ERROR",
@@ -516,7 +637,7 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
 
     # 4. Falhou: tenta distribuir a chave via ssh-copy-id
     if not ssh_pass:
-        gravar_log(caminho_log_local, "ERROR",
+        gravar_log(caminho_log_local, nivel_falha,
                    "[{}] Bootstrap SSH: chave nao autorizada e nenhuma "
                    "senha SSH fornecida (use --ssh-pass, SSH_PASS env ou "
                    "--ssh-pass-file)".format(ip),
@@ -530,7 +651,7 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
 
     sucesso_copy = _ssh_copy_id_com_senha(
         ip, ssh_user, ssh_pass, chave_pub,
-        caminho_log_local, verbose,
+        caminho_log_local, verbose, nivel_falha,
     )
     if not sucesso_copy:
         # _ssh_copy_id_com_senha ja registrou o ERROR especifico da etapa
@@ -544,9 +665,11 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
                    verbose, False)
         return True
 
-    gravar_log(caminho_log_local, "ERROR",
+    gravar_log(caminho_log_local, nivel_falha,
                "[{}] Bootstrap SSH: ssh-copy-id reportou sucesso mas a "
-               "reconexao por chave ainda falha".format(ip),
+               "reconexao por chave ainda falha (chave {}, servidor {})".format(
+                   ip, os.path.basename(chave_pub),
+                   versao_servidor_ssh(ip) or "banner nao lido"),
                verbose, False)
     return False
 

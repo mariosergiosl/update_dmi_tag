@@ -13,7 +13,13 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - SCRIPT_VERSION 2.3.3.
+# REVISION: 2026-09-28 - v2.3.2 - SCRIPT_VERSION 2.3.2.
+# REVISION: 2026-09-24 - v2.3.1 - SCRIPT_VERSION 2.3.1.
+# REVISION: 2026-09-23 - v2.3.0 - SCRIPT_VERSION 2.3.0;
+#                        MODULE_PACKAGE_PREFIX; comentario do pacote
+#                        userspace atualizado (nao e mais instalado).
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -174,7 +180,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.2.9"
+SCRIPT_VERSION = "2.3.3"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -212,8 +218,17 @@ DEFAULT_SYSFS_TARGET   = "/sys/firmware/amibios/chassis/asset_tag"
 # onde ele ainda nao estiver carregado.
 DEFAULT_MODULE_REPO_URL = _le_config_repo("MODULE_REPO_URL", "BB_MODULE_REPO_URL")
 DEFAULT_MODULE_PACKAGE  = "amibios-dmi-kmp-default"
-# Pacote userspace complementar (nao usado pela leitura/escrita via sysfs,
-# instalado apenas por completude/paridade com o fork upstream).
+# Prefixo do nome do KMP; o sufixo e o flavor do kernel do host
+# (amibios-dmi-kmp-default, amibios-dmi-kmp-pae). Desde a v2.3.0, sem
+# --module-package, o nome e derivado do osrelease de cada host (ver
+# environment.pacote_kmp_para_kernel); DEFAULT_MODULE_PACKAGE fica como
+# reserva quando o kernel nao pode ser lido.
+MODULE_PACKAGE_PREFIX   = "amibios-dmi-kmp-"
+# Pacote userspace complementar (nao usado pela leitura/escrita via sysfs).
+# Desde a v2.3.0 NAO e mais instalado: so contem documentacao, e em pasta
+# junto do KMP derrubava a instalacao em host de 32 bits (pacote x86_64 na
+# mesma transacao, ver environment.instala_modulo_remoto). O nome continua
+# aqui para remover residuo de versoes anteriores no alvo.
 DEFAULT_MODULE_USERSPACE_PACKAGE = "amibios-dmi"
 # Diretorio local com os RPMs do fork mariosergiosl/amibios_dmi (GPLv2,
 # nao e NDA como amidelnx_64/AMIDEEFIx64.EFI), versionados no proprio
@@ -340,8 +355,9 @@ SSH_OPTS                = [
 # --- Chaves SSH locais para bootstrap de autenticacao ---
 # Caminhos padrao das chaves SSH do usuario que executa o script.
 # Sao verificadas em ordem (RSA primeiro por compatibilidade legada,
-# ed25519 como padrao moderno). Se nenhuma existir, o script gera
-# id_ed25519 automaticamente via ssh-keygen sem passphrase.
+# ed25519 como padrao moderno). v2.3.1: o bootstrap gera id_rsa sem
+# passphrase quando nao houver RSA, porque ed25519 nao existe no OpenSSH
+# anterior ao 6.5 (SLE 11 SP3); ver ssh_bootstrap._obtem_chave_para_bootstrap.
 DEFAULT_SSH_KEY_RSA     = os.path.expanduser("~/.ssh/id_rsa")
 DEFAULT_SSH_KEY_ED25519 = os.path.expanduser("~/.ssh/id_ed25519")
 

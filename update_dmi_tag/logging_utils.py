@@ -13,7 +13,23 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.2.9
+# VERSION: 2.3.3
+# REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-28 - v2.3.2 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
+# REVISION: 2026-09-24 - v2.3.1 - gravar_log_remoto: a linha vai para o
+#                        alvo codificada em base64 dentro do comando, e nao
+#                        mais pelo stdin do sudo. Com sudo por senha
+#                        ("echo senha | sudo -S"), o stdin era consumido pela
+#                        senha e a linha se perdia; e, com a credencial em
+#                        cache, a propria senha podia ir parar no arquivo.
+#                        O diretorio criado passa a ser o do proprio log.
+# REVISION: 2026-09-23 - v2.3.0 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-07-22 - v2.2.9 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -76,6 +92,7 @@
 #
 # =======================================================================
 
+import base64
 import os
 import subprocess
 import sys
@@ -212,15 +229,19 @@ def gravar_log_remoto(
 
     # Grava no log remoto via SSH
     try:
-        linha_escapada = linha_remota.replace("'", "'\\''")
-        diretorio_remoto = "/var/log"
+        # v2.3.1: a linha segue em base64 como argumento do comando; o
+        # stdin do sudo fica livre para a senha (sudo -S), que assim nunca
+        # chega ao arquivo. base64 existe no coreutils de todas as linhas.
+        linha_b64 = base64.b64encode(
+            linha_remota.encode("utf-8")).decode("ascii")
+        diretorio_remoto = os.path.dirname(caminho_log_remoto) or "/var/log"
         cmd_remoto = (
             "{sudo} mkdir -p {dir} 2>/dev/null; "
-            "echo '{linha}' | {sudo} tee -a {log} > /dev/null"
+            "{sudo} sh -c 'echo {b64} | base64 -d >> {log}' 2>/dev/null"
         ).format(
             sudo=sudo_cmd,
             dir=diretorio_remoto,
-            linha=linha_escapada.rstrip("\n"),
+            b64=linha_b64,
             log=caminho_log_remoto,
         )
         # IMPORTANTE: timeout obrigatorio. Sem ele, um log gravado logo
