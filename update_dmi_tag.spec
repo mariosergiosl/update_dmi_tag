@@ -6,7 +6,7 @@
 
 Name:           update_dmi_tag
 Version:        2.3.3
-Release:        1
+Release:        2
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
 License:        GPL-3.0-only
@@ -17,6 +17,9 @@ BuildArch:      noarch
 
 # Build Dependencies
 BuildRequires:  python3
+# gzip abre o Source0 na secao prep; o ambiente minimo de build do SLE 16
+# nao o traz (falha em 01/10/2026: /usr/bin/gzip: No such file).
+BuildRequires:  gzip
 
 # Runtime Dependencies (stdlib apenas, sem pip)
 Requires:       python3
@@ -90,6 +93,10 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Oct 01 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-2
+- BuildRequires: gzip. O ambiente minimo de build do SLE 16 nao traz
+  o gzip, e a secao prep falhava ao abrir o Source0. Sem mudanca de codigo.
+
 * Wed Sep 30 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-1
 - Padrao de --bbconfig-digitos volta a 14, igual ao de --bios-digitos,
   conforme a definicao revista em 30/09/2026; sem nova versao do codigo.
