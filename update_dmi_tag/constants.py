@@ -13,7 +13,8 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.4
+# VERSION: 2.3.5
+# REVISION: 2026-10-02 - v2.3.5 - SCRIPT_VERSION 2.3.5.
 # REVISION: 2026-10-02 - v2.3.4 - SCRIPT_VERSION 2.3.4.
 # REVISION: 2026-09-28 - v2.3.3 - SCRIPT_VERSION 2.3.3.
 # REVISION: 2026-09-28 - v2.3.2 - SCRIPT_VERSION 2.3.2.
@@ -181,7 +182,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.3.4"
+SCRIPT_VERSION = "2.3.5"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"

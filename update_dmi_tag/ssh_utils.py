@@ -16,7 +16,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.4
+# VERSION: 2.3.5
+# REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-10-02 - v2.3.4 - testa_conexao_ssh espera ate
 #                        TIMEOUT_TESTE_CONEXAO (padrao 30 s, antes 5 s fixos),
 #                        ajustavel por define_timeout_teste_conexao (opcao

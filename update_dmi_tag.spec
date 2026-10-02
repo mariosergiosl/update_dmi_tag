@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.3.4
+Version:        2.3.5
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -93,6 +93,11 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Fri Oct 02 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.5-0
+- Publica as mudancas da 2.3.4 (abaixo), que rodou so em teste no
+  ambiente real, com versoes intermediarias do codigo; numero novo para
+  que o cabecalho do log identifique o codigo final sem ambiguidade.
+
 * Fri Oct 02 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.4-0
 - Chave SSH distribuida pelo bootstrap passa a depender do sshd do alvo:
   ed25519 para OpenSSH 6.5 ou mais novo (SLE 12 em diante), RSA para o

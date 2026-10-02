@@ -2,7 +2,7 @@
 
 Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag na BIOS AMI.
 
-**Versao atual: v2.3.4**
+**Versao atual: v2.3.5**
 
 ## Visao Geral
 
