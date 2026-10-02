@@ -99,6 +99,11 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
   anterior (SLE 11). Se a conexao pela primeira chave falhar, a outra e
   distribuida e testada. Corrige SLED 12 que aceitava a senha e recusava
   a conexao pela chave RSA.
+- Teste de conexao por chave espera ate 30 s (antes 5 s fixos), com a
+  nova opcao --ssh-timeout. Hosts SLED 12 que levam de 7 a 11 s para
+  concluir o login eram dados como sem chave e terminavam INACESSIVEL,
+  embora a senha fosse aceita e a chave gravada. Login lento vira aviso
+  no log, e a falha final indica quando o teste foi cortado pelo limite.
 
 * Thu Oct 01 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-2
 - BuildRequires: gzip. O ambiente minimo de build do SLE 16 nao traz

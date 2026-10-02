@@ -33,6 +33,10 @@
 #                        aceitou a senha e gravou a chave RSA, mas recusou
 #                        a conexao por ela; com a 2.3.0 (ed25519) a mesma
 #                        conta entrou em 94 SLED 12 SP2 e SP4.
+#                        Teste de conexao medido: login por chave acima de
+#                        LIMITE_LOGIN_LENTO vira aviso no log, e a falha
+#                        final indica quando o teste foi cortado pelo limite
+#                        de tempo (--ssh-timeout), causa real do defeito.
 # REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -135,6 +139,7 @@ import time
 
 from .constants import DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_ED25519
 from .logging_utils import gravar_log
+from . import ssh_utils
 from .ssh_utils import testa_conexao_ssh, versao_openssh, versao_servidor_ssh
 
 # Protege a checagem+geracao da chave SSH local (recurso compartilhado
@@ -247,6 +252,30 @@ def _gera_chave_ssh_local(caminho_log_local, verbose, tipo="ed25519"):
 
 # v2.3.4: primeira versao do OpenSSH que conhece ed25519.
 _VERSAO_MIN_ED25519 = (6, 5)
+
+
+def _testa_e_mede(ip, ssh_user, caminho_log_local, verbose):
+    """
+    NAME: _testa_e_mede
+    DESCRIPTION: v2.3.4. testa_conexao_ssh com medicao de tempo. Login
+                 aceito acima de LIMITE_LOGIN_LENTO vira aviso no log.
+    PARAMETER: ip                - endereco IP do host remoto
+               ssh_user          - usuario SSH
+               caminho_log_local - log local consolidado
+               verbose           - se True, imprime no stdout
+    RETURNS: tuple(bool, bool), (conectou, cortado pelo limite de tempo)
+    """
+    inicio = time.time()
+    ok = testa_conexao_ssh(ip, ssh_user)
+    decorrido = time.time() - inicio
+    limite = ssh_utils.TIMEOUT_TESTE_CONEXAO
+    if ok and decorrido > ssh_utils.LIMITE_LOGIN_LENTO:
+        gravar_log(caminho_log_local, "WARNING",
+                   "[{}] Bootstrap SSH: login por chave lento ({:.1f} s; "
+                   "limite do teste {} s, opcao --ssh-timeout)".format(
+                       ip, decorrido, limite),
+                   verbose, False)
+    return ok, (not ok and decorrido >= limite - 0.5)
 
 
 def _tipos_de_chave(banner):
@@ -641,7 +670,8 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
     """
     # 1. Caminho feliz: alguma chave do usuario ja esta autorizada
     # (BatchMode=yes, sem -i: o cliente oferece todas as chaves padrao).
-    if testa_conexao_ssh(ip, ssh_user):
+    ok, _ = _testa_e_mede(ip, ssh_user, caminho_log_local, verbose)
+    if ok:
         return True
 
     # 2. Sem chave autorizada, so a senha permite distribuir uma.
@@ -656,6 +686,7 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
     # 3. v2.3.4: o tipo de chave depende do sshd do alvo (banner).
     banner = versao_servidor_ssh(ip)
     distribuidas = []
+    cortado = False
     for tipo in _tipos_de_chave(banner):
         # Protegido por lock porque a chave e um recurso compartilhado
         # entre todos os hosts/threads (ver _lock_chave_ssh_local acima):
@@ -683,7 +714,9 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
             return False
 
         # 5. Reconfere via chave apos copy-id
-        if testa_conexao_ssh(ip, ssh_user):
+        ok, cortou = _testa_e_mede(ip, ssh_user, caminho_log_local, verbose)
+        cortado = cortado or cortou
+        if ok:
             gravar_log(caminho_log_local, "INFO",
                        "[{}] Bootstrap SSH: chave {} distribuida e conexao "
                        "por chave validada".format(
@@ -701,9 +734,12 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
 
     gravar_log(caminho_log_local, nivel_falha,
                "[{}] Bootstrap SSH: ssh-copy-id reportou sucesso mas a "
-               "reconexao por chave ainda falha (chave {}, servidor {})".format(
+               "reconexao por chave ainda falha (chave {}, servidor {}{})".format(
                    ip, " e ".join(distribuidas),
-                   banner or "banner nao lido"),
+                   banner or "banner nao lido",
+                   "; teste cortado pelo limite de {} s, aumentar "
+                   "--ssh-timeout".format(ssh_utils.TIMEOUT_TESTE_CONEXAO)
+                   if cortado else ""),
                verbose, False)
     return False
 

@@ -13,7 +13,8 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.1
+# VERSION: 2.3.4
+# REVISION: 2026-10-02 - v2.3.4 - TestTimeoutTesteConexaoV234.
 # CREATED: 2026-09-24
 # REVISION: 2026-09-24 - v2.3.1 - criado.
 #
@@ -121,6 +122,77 @@ class TestGravarLogRemotoV231(unittest.TestCase):
     def test_diretorio_criado_e_o_do_log(self):
         cmd = self._cmd("sudo", "/opt/logs/x.log")
         self.assertIn("mkdir -p /opt/logs", cmd)
+
+
+class TestTimeoutTesteConexaoV234(unittest.TestCase):
+    """v2.3.4, defeito de campo 2026-10-01/02: SLED 12 levavam de 7 a 11 s
+    para concluir o login por chave; o teste cortava o ssh aos 5 s e o host
+    era dado como sem chave, com a senha aceita e a chave gravada a cada
+    execucao."""
+
+    def setUp(self):
+        self.p = mock.patch.object(su, "TIMEOUT_TESTE_CONEXAO",
+                                   su.TIMEOUT_TESTE_CONEXAO)
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+
+    def _ssh_falso(self, espera, rc):
+        """Cria um ssh falso no PATH que espera e sai com rc."""
+        import shutil
+        import tempfile
+        pasta = tempfile.mkdtemp()
+        caminho = os.path.join(pasta, "ssh")
+        with open(caminho, "w") as f:
+            f.write("#!/bin/sh\nsleep {}\nexit {}\n".format(espera, rc))
+        os.chmod(caminho, 0o755)
+        self.addCleanup(shutil.rmtree, pasta, True)
+        return mock.patch.dict(os.environ,
+                               {"PATH": pasta + os.pathsep + os.environ["PATH"]})
+
+    def test_padrao_e_30_s(self):
+        """Defeito: a versao anterior passava timeout=5 ao ssh_run."""
+        with mock.patch.object(su, "ssh_run", return_value=(0, "", "")) as m:
+            self.assertTrue(su.testa_conexao_ssh("192.0.2.1", "u"))
+        self.assertEqual(m.call_args[1]["timeout"], 30)
+
+    def test_opcao_ajusta_o_limite(self):
+        """--ssh-timeout chega ao teste usado pela triagem e pelo bootstrap."""
+        texto = su.define_timeout_teste_conexao(45)
+        self.assertIn("45 s", texto)
+        with mock.patch.object(su, "ssh_run", return_value=(0, "", "")) as m:
+            su.testa_conexao_ssh("192.0.2.1", "u")
+        self.assertEqual(m.call_args[1]["timeout"], 45)
+
+    def test_limite_explicito_prevalece(self):
+        """Colisao: quem passa o proprio limite continua no controle."""
+        su.define_timeout_teste_conexao(45)
+        with mock.patch.object(su, "ssh_run", return_value=(0, "", "")) as m:
+            su.testa_conexao_ssh("192.0.2.1", "u", timeout=7)
+        self.assertEqual(m.call_args[1]["timeout"], 7)
+
+    @unittest.skipUnless(os.name == "posix", "ssh falso em shell")
+    def test_login_lento_de_8_s_e_aceito(self):
+        """Defeito, fato observavel: ssh que leva 8 s e entra."""
+        with self._ssh_falso(8, 0):
+            self.assertTrue(su.testa_conexao_ssh("192.0.2.1", "u"))
+
+    @unittest.skipUnless(os.name == "posix", "ssh falso em shell")
+    def test_ssh_preso_alem_do_limite_nao_vira_sucesso(self):
+        """Adverso: o corte por tempo continua valendo."""
+        su.define_timeout_teste_conexao(1)
+        with self._ssh_falso(60, 0):
+            self.assertFalse(su.testa_conexao_ssh("192.0.2.1", "u"))
+
+    @unittest.skipUnless(os.name == "posix", "ssh falso em shell")
+    def test_chave_recusada_falha_na_hora(self):
+        """Regressao: recusa (rc 255) continua False, sem esperar o limite."""
+        import time
+        inicio = time.time()
+        with self._ssh_falso(0, 255):
+            self.assertFalse(su.testa_conexao_ssh("192.0.2.1", "u"))
+        self.assertLess(time.time() - inicio, 5)
 
 
 if __name__ == "__main__":

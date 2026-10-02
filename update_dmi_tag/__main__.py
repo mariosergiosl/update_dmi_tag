@@ -31,9 +31,10 @@
 # COMPANY: SUSE
 #
 # VERSION: 2.3.4
-# REVISION: 2026-10-02 - v2.3.4 - atualizacao de numero de versao para
-#                        consistencia com o restante do pacote; sem mudanca
-#                        funcional neste arquivo.
+# REVISION: 2026-10-02 - v2.3.4 - nova opcao --ssh-timeout (segundos do
+#                        teste de conexao por chave, padrao 30, antes 5
+#                        fixos); cabecalho do log registra o valor na
+#                        linha SSH.
 # REVISION: 2026-09-28 - v2.3.3 - padrao de --bbconfig-digitos passa a 13
 #                        (formato gravado pelo gestor oficial do arquivo);
 #                        --bios-digitos continua 14.
@@ -210,7 +211,7 @@ from .bbconfig import le_valor_configuracao, sincroniza_bbconfig_local
 from .write_cascade import tenta_escrever_tag_local
 from .hosts import le_arquivo_hosts
 from .host_processor import processa_host_remoto, triagem_hosts_remotos
-from .ssh_utils import habilita_ssh_rsa_legado
+from .ssh_utils import define_timeout_teste_conexao, habilita_ssh_rsa_legado
 from .ssh_bootstrap import limpa_temporarios_ssh_copy_id
 from .summary import monta_tabela_resumo
 
@@ -572,6 +573,19 @@ def main():
         ),
     )
     parser.add_argument(
+        "--ssh-timeout",
+        type=int,
+        default=30,
+        dest="ssh_timeout",
+        metavar="SEGUNDOS",
+        help=(
+            "v2.3.4. Segundos de espera do teste de conexao SSH por chave "
+            "(padrao: 30). Hosts que demoram a concluir o login aparecem no "
+            "log como 'login por chave lento'; aumente so se a falha final "
+            "indicar 'teste cortado pelo limite'."
+        ),
+    )
+    parser.add_argument(
         "--efi-timeout",
         type=int,
         default=DEFAULT_EFI_REBOOT_TIMEOUT,
@@ -646,6 +660,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # v2.3.4: o teste de conexao precisa de algum tempo para o ssh.
+    if args.ssh_timeout < 1:
+        parser.error("--ssh-timeout deve ser maior que zero")
 
     # Resolve a senha SSH efetiva para o bootstrap de autenticacao,
     # aplicando precedencia: --ssh-pass > SSH_PASS env > --ssh-pass-file.
@@ -832,7 +850,9 @@ def main():
         _log_local("INFO", "Inicio: {}".format(
             time.strftime("%Y-%m-%d %H:%M:%S")))
         _log_local("INFO", "Operad: {}".format(_operador_execucao()))
-        _log_local("INFO", "SSH   : {}".format(habilita_ssh_rsa_legado()))
+        _log_local("INFO", "SSH   : {}; {}".format(
+            habilita_ssh_rsa_legado(),
+            define_timeout_teste_conexao(args.ssh_timeout)))
         inicio_execucao = time.time()
         _log_local("INFO", "Hosts : {}".format(args.hosts))
         _log_local("INFO", "Digit.: BIOS {}, arquivo de configuracao {}".format(

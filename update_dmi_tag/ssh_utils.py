@@ -17,9 +17,14 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 # VERSION: 2.3.4
-# REVISION: 2026-10-02 - v2.3.4 - atualizacao de numero de versao para
-#                        consistencia com o restante do pacote; sem mudanca
-#                        funcional neste arquivo.
+# REVISION: 2026-10-02 - v2.3.4 - testa_conexao_ssh espera ate
+#                        TIMEOUT_TESTE_CONEXAO (padrao 30 s, antes 5 s fixos),
+#                        ajustavel por define_timeout_teste_conexao (opcao
+#                        --ssh-timeout). Defeito de campo 2026-10-01/02: SLED
+#                        12 levavam de 7 a 11 s para concluir o login por
+#                        chave e eram dados como sem chave; a senha era
+#                        aceita, a chave gravada a cada execucao e o host
+#                        terminava INACESSIVEL.
 # REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -117,6 +122,14 @@ from .logging_utils import gravar_log_remoto
 SSH_OPTS_EXTRA = []
 _OPCAO_SSH_RSA = "PubkeyAcceptedAlgorithms=+ssh-rsa"
 
+# v2.3.4: tempo maximo do teste de conexao por chave (opcao --ssh-timeout).
+# Host sem SSH ja e descartado antes pelo teste de porta (2 s) e chave
+# recusada responde na hora; o limite so pesa em host lento para concluir
+# o login. Alterado so no inicio da execucao, antes das threads.
+TIMEOUT_TESTE_CONEXAO = 30
+# v2.3.4: login por chave acima deste tempo e registrado como lento.
+LIMITE_LOGIN_LENTO = 5
+
 
 def versao_openssh(texto):
     """
@@ -209,16 +222,34 @@ def ssh_run(ip, ssh_user, comando, timeout=30):
         return 255, "", "Excecao SSH: {}".format(e)
 
 
-def testa_conexao_ssh(ip, ssh_user):
+def define_timeout_teste_conexao(segundos):
+    """
+    NAME: define_timeout_teste_conexao
+    DESCRIPTION: v2.3.4. Ajusta TIMEOUT_TESTE_CONEXAO (opcao --ssh-timeout).
+                 Chamada uma vez, no inicio do modo remoto.
+    PARAMETER: segundos - inteiro maior que zero
+    RETURNS: str, texto para o cabecalho do log
+    """
+    global TIMEOUT_TESTE_CONEXAO
+    TIMEOUT_TESTE_CONEXAO = int(segundos)
+    return "teste de conexao ate {} s".format(TIMEOUT_TESTE_CONEXAO)
+
+
+def testa_conexao_ssh(ip, ssh_user, timeout=None):
     """
     NAME: testa_conexao_ssh
     DESCRIPTION: Verifica se o host remoto esta acessivel via SSH.
-                 Usa timeout reduzido (5 s) para nao bloquear a listagem.
+                 v2.3.4: espera ate TIMEOUT_TESTE_CONEXAO (padrao 30 s,
+                 opcao --ssh-timeout); com 5 s fixos, hosts lentos para
+                 concluir o login eram dados como sem chave.
     PARAMETER: ip       - endereco IP do host remoto
                ssh_user - usuario SSH
+               timeout  - segundos; None usa TIMEOUT_TESTE_CONEXAO
     RETURNS: bool, True se acessivel
     """
-    rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=5)
+    if timeout is None:
+        timeout = TIMEOUT_TESTE_CONEXAO
+    rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=timeout)
     return rc == 0
 
 

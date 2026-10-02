@@ -19,7 +19,8 @@
 # REVISION: 2026-10-02 - v2.3.4 - TestEscolhaChaveV234; TestChaveRsaV231
 #                        passa a fixar o banner (a escolha da chave depende
 #                        dele) e o caso de falha ao gerar a RSA vale para
-#                        banner nao lido.
+#                        banner nao lido. TestLoginLentoV234: aviso de login
+#                        lento e indicacao de teste cortado pelo limite.
 # REVISION: 2026-09-24 - v2.3.1 - TestChaveRsaV231 e
 #                        TestLimpaTemporariosV231.
 # CREATED: 2026-09-23
@@ -379,6 +380,61 @@ class TestEscolhaChaveV234(_BaseHomeSsh):
         self.assertFalse(ok)
         self.assertFalse(m_banner.called)
         self.assertIn("nenhuma senha", m_log.call_args_list[-1][0][2])
+
+
+class TestLoginLentoV234(_BaseHomeSsh):
+    """v2.3.4: o defeito de campo era o teste de conexao cortado pelo tempo;
+    o log precisa dizer isso em vez de sugerir chave recusada."""
+
+    def _conexao(self, resultados, duracao):
+        """testa_conexao_ssh falso que 'demora' avancando o relogio."""
+        relogio = [1000.0]
+        fila = list(resultados)
+
+        def testa(ip, user):
+            relogio[0] += duracao
+            return fila.pop(0)
+        return testa, (lambda: relogio[0])
+
+    def _roda(self, resultados, duracao, limite=30):
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        testa, agora = self._conexao(resultados, duracao)
+        with mock.patch.object(sb, "testa_conexao_ssh", side_effect=testa), \
+             mock.patch.object(sb.time, "time", side_effect=agora), \
+             mock.patch.object(sb.ssh_utils, "TIMEOUT_TESTE_CONEXAO", limite), \
+             mock.patch.object(sb, "versao_servidor_ssh",
+                               return_value="SSH-2.0-OpenSSH_7.2"), \
+             mock.patch.object(sb, "_ssh_copy_id_com_senha", return_value=True), \
+             mock.patch.object(sb, "gravar_log") as m_log:
+            ok = sb.prepara_autenticacao_ssh("192.0.2.1", "u", "s", "", False)
+        return ok, [(c[0][1], c[0][2]) for c in m_log.call_args_list]
+
+    def test_login_lento_aceito_gera_aviso(self):
+        ok, logs = self._roda([True], 11.3)
+        self.assertTrue(ok)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0][0], "WARNING")
+        self.assertIn("lento (11.3 s", logs[0][1])
+
+    def test_login_rapido_continua_silencioso(self):
+        """Regressao: caminho feliz sem log."""
+        ok, logs = self._roda([True], 0.5)
+        self.assertTrue(ok)
+        self.assertEqual(logs, [])
+
+    def test_teste_cortado_pelo_limite_e_indicado_na_falha(self):
+        """Defeito: a mensagem falava so em reconexao falhando."""
+        ok, logs = self._roda([False, False, False], 30, limite=30)
+        self.assertFalse(ok)
+        self.assertIn("teste cortado pelo limite de 30 s", logs[-1][1])
+        self.assertIn("--ssh-timeout", logs[-1][1])
+
+    def test_recusa_rapida_nao_indica_corte(self):
+        """Adverso: chave recusada de verdade nao sugere aumentar o limite."""
+        ok, logs = self._roda([False, False, False], 0.3)
+        self.assertFalse(ok)
+        self.assertNotIn("cortado", logs[-1][1])
 
 
 if __name__ == "__main__":
