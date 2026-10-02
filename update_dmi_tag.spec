@@ -104,6 +104,9 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
   concluir o login eram dados como sem chave e terminavam INACESSIVEL,
   embora a senha fosse aceita e a chave gravada. Login lento vira aviso
   no log, e a falha final indica quando o teste foi cortado pelo limite.
+- O mesmo valor e somado ao tempo de cada comando SSH e de cada scp
+  (folga de login). Com 10 a 15 s, comandos nesses hosts eram cortados
+  (conferencia do scp, deteccao do sudo, arquivo de configuracao).
 
 * Thu Oct 01 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-2
 - BuildRequires: gzip. O ambiente minimo de build do SLE 16 nao traz

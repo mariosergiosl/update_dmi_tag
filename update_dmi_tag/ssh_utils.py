@@ -24,7 +24,11 @@
 #                        12 levavam de 7 a 11 s para concluir o login por
 #                        chave e eram dados como sem chave; a senha era
 #                        aceita, a chave gravada a cada execucao e o host
-#                        terminava INACESSIVEL.
+#                        terminava INACESSIVEL. ssh_run e o scp somam o
+#                        mesmo valor ao tempo de cada comando (folga de
+#                        login): com 10 a 15 s, comandos em hosts que levam
+#                        7 a 11 s so para logar eram cortados (conferencia
+#                        do scp, deteccao do sudo, arquivo de configuracao).
 # REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -194,18 +198,24 @@ def versao_servidor_ssh(ip, porta=22, timeout=3.0):
         return ""
 
 
-def ssh_run(ip, ssh_user, comando, timeout=30):
+def ssh_run(ip, ssh_user, comando, timeout=30, folga_login=True):
     """
     NAME: ssh_run
     DESCRIPTION: Executa um comando no host remoto via SSH sem TTY.
                  Retorna tupla (returncode, stdout, stderr).
                  Nunca lanca excecao: erros de conexao retornam rc=255.
-    PARAMETER: ip       - endereco IP do host remoto
-               ssh_user - usuario SSH
-               comando  - string de comando a executar no shell remoto
-               timeout  - timeout em segundos (padrao: 30)
+                 v2.3.4: soma TIMEOUT_TESTE_CONEXAO (folga de login) ao
+                 timeout do comando, porque cada chamada abre um login novo.
+    PARAMETER: ip          - endereco IP do host remoto
+               ssh_user    - usuario SSH
+               comando     - string de comando a executar no shell remoto
+               timeout     - tempo do comando em segundos (padrao: 30)
+               folga_login - False so no teste de conexao, cujo timeout ja
+                             e o proprio tempo de login
     RETURNS: tuple(int, str, str), (returncode, stdout, stderr)
     """
+    if folga_login:
+        timeout = timeout + TIMEOUT_TESTE_CONEXAO
     try:
         resultado = subprocess.run(
             ["ssh"] + SSH_OPTS + ["{}@{}".format(ssh_user, ip), comando],
@@ -249,7 +259,8 @@ def testa_conexao_ssh(ip, ssh_user, timeout=None):
     """
     if timeout is None:
         timeout = TIMEOUT_TESTE_CONEXAO
-    rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=timeout)
+    rc, _, _ = ssh_run(ip, ssh_user, "true", timeout=timeout,
+                       folga_login=False)
     return rc == 0
 
 
@@ -383,7 +394,7 @@ def scp_arquivo(ip, ssh_user, caminho_local, caminho_remoto):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
-            timeout=60,
+            timeout=60 + TIMEOUT_TESTE_CONEXAO,
             check=False,
         )
         return resultado.returncode == 0
@@ -424,7 +435,7 @@ def _scp_arquivo_com_erro(ip, ssh_user, caminho_local, caminho_remoto):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
-            timeout=60,
+            timeout=60 + TIMEOUT_TESTE_CONEXAO,
             check=False,
         )
         if resultado.returncode == 0:
@@ -436,7 +447,8 @@ def _scp_arquivo_com_erro(ip, ssh_user, caminho_local, caminho_remoto):
         return False, "rc={} stderr=[{}]".format(
             resultado.returncode, stderr_limpo)
     except subprocess.TimeoutExpired:
-        return False, "timeout (60 s) ao copiar via scp"
+        return False, "timeout ({} s) ao copiar via scp".format(
+            60 + TIMEOUT_TESTE_CONEXAO)
     except FileNotFoundError:
         return False, "binario scp nao encontrado no PATH local"
     except Exception as e:

@@ -580,9 +580,10 @@ def main():
         metavar="SEGUNDOS",
         help=(
             "v2.3.4. Segundos de espera do teste de conexao SSH por chave "
-            "(padrao: 30). Hosts que demoram a concluir o login aparecem no "
-            "log como 'login por chave lento'; aumente so se a falha final "
-            "indicar 'teste cortado pelo limite'."
+            "(padrao: 30); o mesmo valor e somado ao tempo de cada comando "
+            "SSH e scp, como folga para o login. Hosts que demoram a "
+            "concluir o login aparecem no log como 'login por chave lento'; "
+            "aumente so se a falha final indicar 'teste cortado pelo limite'."
         ),
     )
     parser.add_argument(

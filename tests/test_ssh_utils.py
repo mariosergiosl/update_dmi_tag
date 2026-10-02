@@ -185,6 +185,49 @@ class TestTimeoutTesteConexaoV234(unittest.TestCase):
         with self._ssh_falso(60, 0):
             self.assertFalse(su.testa_conexao_ssh("192.0.2.1", "u"))
 
+    def test_comando_recebe_folga_de_login(self):
+        """Defeito: comandos de 10 s eram cortados em host que leva 8 a 11 s
+        so para logar (conferencia do scp, deteccao do sudo)."""
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="",
+                                                      stderr="")) as m:
+            su.ssh_run("192.0.2.1", "u", "true", timeout=10)
+        self.assertEqual(m.call_args[1]["timeout"], 40)
+
+    def test_folga_acompanha_ssh_timeout(self):
+        """Colisao: --ssh-timeout ajusta teste de conexao e folga juntos."""
+        su.define_timeout_teste_conexao(45)
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="",
+                                                      stderr="")) as m:
+            su.ssh_run("192.0.2.1", "u", "true", timeout=10)
+            su.testa_conexao_ssh("192.0.2.1", "u")
+        self.assertEqual([c[1]["timeout"] for c in m.call_args_list], [55, 45])
+
+    def test_teste_de_conexao_nao_soma_folga(self):
+        """Regressao: o teste de conexao continua no proprio limite."""
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="",
+                                                      stderr="")) as m:
+            su.testa_conexao_ssh("192.0.2.1", "u")
+        self.assertEqual(m.call_args[1]["timeout"], 30)
+
+    def test_scp_recebe_folga_de_login(self):
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="",
+                                                      stderr="")) as m:
+            su.scp_arquivo("192.0.2.1", "u", "a", "/tmp/a")
+            su._scp_arquivo_com_erro("192.0.2.1", "u", "a", "/tmp/a")
+        self.assertEqual([c[1]["timeout"] for c in m.call_args_list], [90, 90])
+
+    @unittest.skipUnless(os.name == "posix", "ssh falso em shell")
+    def test_comando_de_10_s_em_login_lento_conclui(self):
+        """Defeito, fato observavel: login de 8 s + comando, limite 10 s."""
+        su.define_timeout_teste_conexao(5)
+        with self._ssh_falso(8, 0):
+            rc, _, err = su.ssh_run("192.0.2.1", "u", "true", timeout=10)
+        self.assertEqual((rc, err), (0, ""))
+
     @unittest.skipUnless(os.name == "posix", "ssh falso em shell")
     def test_chave_recusada_falha_na_hora(self):
         """Regressao: recusa (rc 255) continua False, sem esperar o limite."""
