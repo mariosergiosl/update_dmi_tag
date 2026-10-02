@@ -5,8 +5,8 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.3.3
-Release:        2
+Version:        2.3.4
+Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
 License:        GPL-3.0-only
@@ -93,6 +93,13 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Fri Oct 02 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.4-0
+- Chave SSH distribuida pelo bootstrap passa a depender do sshd do alvo:
+  ed25519 para OpenSSH 6.5 ou mais novo (SLE 12 em diante), RSA para o
+  anterior (SLE 11). Se a conexao pela primeira chave falhar, a outra e
+  distribuida e testada. Corrige SLED 12 que aceitava a senha e recusava
+  a conexao pela chave RSA.
+
 * Thu Oct 01 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.3-2
 - BuildRequires: gzip. O ambiente minimo de build do SLE 16 nao traz
   o gzip, e a secao prep falhava ao abrir o Source0. Sem mudanca de codigo.

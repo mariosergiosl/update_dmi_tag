@@ -15,7 +15,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.1
+# VERSION: 2.3.4
+# REVISION: 2026-10-02 - v2.3.4 - TestEscolhaChaveV234; TestChaveRsaV231
+#                        passa a fixar o banner (a escolha da chave depende
+#                        dele) e o caso de falha ao gerar a RSA vale para
+#                        banner nao lido.
 # REVISION: 2026-09-24 - v2.3.1 - TestChaveRsaV231 e
 #                        TestLimpaTemporariosV231.
 # CREATED: 2026-09-23
@@ -154,9 +158,10 @@ class TestChaveRsaV231(_BaseHomeSsh):
             return mock.Mock(returncode=0, stderr="", stdout="")
         return run, chamadas
 
-    def _prepara(self, falha_rsa=False):
+    def _prepara(self, falha_rsa=False, banner="SSH-2.0-OpenSSH_6.2"):
         run, chamadas = self._keygen(falha_rsa)
         with mock.patch.object(sb.subprocess, "run", side_effect=run), \
+             mock.patch.object(sb, "versao_servidor_ssh", return_value=banner), \
              mock.patch.object(sb, "testa_conexao_ssh",
                                side_effect=[False, True]), \
              mock.patch.object(sb, "_ssh_copy_id_com_senha",
@@ -182,9 +187,10 @@ class TestChaveRsaV231(_BaseHomeSsh):
         self.assertEqual([c for c in chamadas if c[0] == "ssh-keygen"], [])
 
     def test_falha_ao_gerar_rsa_usa_a_ed25519_existente(self):
-        """Adverso: sem RSA possivel, nao perde o acesso que ja funcionava."""
+        """Adverso: sem RSA possivel, nao perde o acesso que ja funcionava.
+        v2.3.4: com banner nao lido a ed25519 ja e a primeira."""
         self._cria(self.ed)
-        ok, pub, _ = self._prepara(falha_rsa=True)
+        ok, pub, _ = self._prepara(falha_rsa=True, banner="")
         self.assertTrue(ok)
         self.assertEqual(pub, self.ed + ".pub")
 
@@ -241,6 +247,138 @@ class TestLimpaTemporariosV231(_BaseHomeSsh):
         self.assertTrue(os.path.exists(outra))
         self.assertTrue(os.path.isfile(arquivo))
         self.assertTrue(os.path.isfile(self.rsa))
+
+
+class TestEscolhaChaveV234(_BaseHomeSsh):
+    """v2.3.4, defeito de campo 2026-10-01: em SLED 12 (OpenSSH 7.2) a
+    senha foi aceita e a chave RSA gravada, mas a conexao por ela foi
+    recusada; com a ed25519 (2.3.0) a mesma conta entrou em 94 SLED 12.
+    A chave passa a depender do banner do sshd, com troca para o outro
+    tipo se a reconexao falhar."""
+
+    def _keygen(self):
+        """ssh-keygen falso: cria o par pedido em -f."""
+        tipos = []
+
+        def run(argv, **k):
+            if argv[0] == "ssh-keygen":
+                tipos.append(argv[argv.index("-t") + 1])
+                self._cria(argv[argv.index("-f") + 1])
+            return mock.Mock(returncode=0, stderr="", stdout="")
+        return run, tipos
+
+    def _roda(self, banner, conexoes, copia=True, nivel="ERROR"):
+        """Executa o bootstrap; devolve (ok, chaves copiadas, tipos
+        gerados, chamadas de log, banner lido)."""
+        run, tipos = self._keygen()
+        with mock.patch.object(sb.subprocess, "run", side_effect=run), \
+             mock.patch.object(sb, "versao_servidor_ssh",
+                               return_value=banner) as m_banner, \
+             mock.patch.object(sb, "testa_conexao_ssh",
+                               side_effect=conexoes), \
+             mock.patch.object(sb, "_ssh_copy_id_com_senha",
+                               return_value=copia) as m_copy, \
+             mock.patch.object(sb, "gravar_log") as m_log:
+            ok = sb.prepara_autenticacao_ssh("192.0.2.1", "f0000000", "s",
+                                             "", False, nivel)
+        copiadas = [os.path.basename(c[0][3]) for c in m_copy.call_args_list]
+        return ok, copiadas, tipos, m_log.call_args_list, m_banner.called
+
+    def test_sle12_distribui_ed25519_mesmo_com_rsa_existente(self):
+        """Defeito: a 2.3.3 distribuia a id_rsa para o OpenSSH 7.2."""
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        ok, copiadas, tipos, _, _ = self._roda("SSH-2.0-OpenSSH_7.2",
+                                               [False, True])
+        self.assertTrue(ok)
+        self.assertEqual(copiadas, ["id_ed25519.pub"])
+        self.assertEqual(tipos, [])
+
+    def test_sle12_so_com_rsa_gera_ed25519(self):
+        """Defeito: usuario que so tem a RSA gerada pela 2.3.1."""
+        self._cria(self.rsa)
+        ok, copiadas, tipos, _, _ = self._roda("SSH-2.0-OpenSSH_7.2",
+                                               [False, True])
+        self.assertTrue(ok)
+        self.assertEqual(tipos, ["ed25519"])
+        self.assertEqual(copiadas, ["id_ed25519.pub"])
+
+    def test_sle11_continua_so_com_rsa(self):
+        """Regressao (v2.3.1): OpenSSH 6.2 nao conhece ed25519."""
+        self._cria(self.ed)
+        ok, copiadas, tipos, _, _ = self._roda("SSH-2.0-OpenSSH_6.2",
+                                               [False, False])
+        self.assertFalse(ok)
+        self.assertEqual(copiadas, ["id_rsa.pub"],
+                         "ed25519 nunca deve ir para OpenSSH antigo")
+        self.assertEqual(tipos, ["rsa"])
+
+    def test_limite_6_4_rsa_e_6_5_ed25519(self):
+        """Fronteira da versao que introduziu ed25519."""
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        _, copiadas, _, _, _ = self._roda("SSH-2.0-OpenSSH_6.4", [False, True])
+        self.assertEqual(copiadas, ["id_rsa.pub"])
+        _, copiadas, _, _, _ = self._roda("SSH-2.0-OpenSSH_6.5", [False, True])
+        self.assertEqual(copiadas, ["id_ed25519.pub"])
+
+    def test_ed25519_recusada_tenta_rsa(self):
+        """Adverso: se a ed25519 nao entrar, a RSA e distribuida."""
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        ok, copiadas, _, logs, _ = self._roda("SSH-2.0-OpenSSH_7.2",
+                                              [False, False, True])
+        self.assertTrue(ok)
+        self.assertEqual(copiadas, ["id_ed25519.pub", "id_rsa.pub"])
+        self.assertIn("id_rsa.pub", logs[-1][0][2])
+        self.assertIn("validada", logs[-1][0][2])
+
+    def test_as_duas_recusadas_registra_chaves_banner_e_nivel(self):
+        """Adverso e colisao com o laco de perfis: o nivel pedido pelo
+        chamador (WARNING quando ha outro perfil) vale para a falha final."""
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        ok, copiadas, _, logs, _ = self._roda(
+            "SSH-2.0-OpenSSH_7.2", [False, False, False], nivel="WARNING")
+        self.assertFalse(ok)
+        self.assertEqual(copiadas, ["id_ed25519.pub", "id_rsa.pub"])
+        nivel, texto = logs[-1][0][1], logs[-1][0][2]
+        self.assertEqual(nivel, "WARNING")
+        self.assertIn("id_ed25519.pub e id_rsa.pub", texto)
+        self.assertIn("OpenSSH_7.2", texto)
+
+    def test_senha_recusada_nao_tenta_outra_chave(self):
+        """Adverso: a senha nao pode ser reenviada depois de recusada."""
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        ok, copiadas, _, _, _ = self._roda("SSH-2.0-OpenSSH_7.2", [False],
+                                           copia=False)
+        self.assertFalse(ok)
+        self.assertEqual(copiadas, ["id_ed25519.pub"])
+
+    def test_banner_nao_lido_ed25519_e_depois_rsa(self):
+        self._cria(self.rsa)
+        self._cria(self.ed)
+        ok, copiadas, _, logs, _ = self._roda("", [False, False, False])
+        self.assertEqual(copiadas, ["id_ed25519.pub", "id_rsa.pub"])
+        self.assertIn("banner nao lido", logs[-1][0][2])
+
+    def test_chave_ja_autorizada_nao_le_banner_nem_copia(self):
+        """Regressao: caminho feliz silencioso, sem gerar chave."""
+        ok, copiadas, tipos, logs, banner_lido = self._roda(
+            "SSH-2.0-OpenSSH_7.2", [True])
+        self.assertTrue(ok)
+        self.assertEqual((copiadas, tipos, logs, banner_lido),
+                         ([], [], [], False))
+
+    def test_sem_senha_nao_le_banner(self):
+        with mock.patch.object(sb, "testa_conexao_ssh", return_value=False), \
+             mock.patch.object(sb, "versao_servidor_ssh") as m_banner, \
+             mock.patch.object(sb, "gravar_log") as m_log:
+            ok = sb.prepara_autenticacao_ssh("192.0.2.1", "u", "", "", False)
+        self.assertFalse(ok)
+        self.assertFalse(m_banner.called)
+        self.assertIn("nenhuma senha", m_log.call_args_list[-1][0][2])
 
 
 if __name__ == "__main__":

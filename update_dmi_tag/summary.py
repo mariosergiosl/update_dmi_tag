@@ -13,7 +13,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.3
+# VERSION: 2.3.4
+# REVISION: 2026-10-02 - v2.3.4 - atualizacao de numero de versao para
+#                        consistencia com o restante do pacote; sem mudanca
+#                        funcional neste arquivo.
 # REVISION: 2026-09-28 - v2.3.3 - texto de INVALIDO cita o digito
 #                        verificador e orienta corrigir o valor e rodar de
 #                        novo.

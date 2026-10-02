@@ -21,7 +21,18 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.3
+# VERSION: 2.3.4
+# REVISION: 2026-10-02 - v2.3.4 - a chave distribuida passa a depender do
+#                        sshd do alvo, lido pelo banner: ed25519 para
+#                        OpenSSH 6.5 ou mais novo (SLE 12 em diante) e para
+#                        banner nao lido, RSA para OpenSSH anterior ao 6.5
+#                        (SLE 11). Se a reconexao falhar com a primeira
+#                        chave, a outra e distribuida e testada, sem
+#                        repetir o envio quando a senha foi recusada.
+#                        Defeito de campo 2026-10-01: SLED 12 (OpenSSH 7.2)
+#                        aceitou a senha e gravou a chave RSA, mas recusou
+#                        a conexao por ela; com a 2.3.0 (ed25519) a mesma
+#                        conta entrou em 94 SLED 12 SP2 e SP4.
 # REVISION: 2026-09-28 - v2.3.3 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
@@ -124,7 +135,7 @@ import time
 
 from .constants import DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_ED25519
 from .logging_utils import gravar_log
-from .ssh_utils import testa_conexao_ssh, versao_servidor_ssh
+from .ssh_utils import testa_conexao_ssh, versao_openssh, versao_servidor_ssh
 
 # Protege a checagem+geracao da chave SSH local (recurso compartilhado
 # entre todos os hosts) contra corrida entre threads do --parallel: sem
@@ -234,29 +245,41 @@ def _gera_chave_ssh_local(caminho_log_local, verbose, tipo="ed25519"):
     return caminho_priv, caminho_pub
 
 
-def _obtem_chave_para_bootstrap(caminho_log_local, verbose):
+# v2.3.4: primeira versao do OpenSSH que conhece ed25519.
+_VERSAO_MIN_ED25519 = (6, 5)
+
+
+def _tipos_de_chave(banner):
     """
-    NAME: _obtem_chave_para_bootstrap
-    DESCRIPTION: v2.3.1. Devolve a chave a distribuir pelo ssh-copy-id,
-                 sempre RSA quando possivel: gera id_rsa se o usuario so
-                 tiver ed25519 ou nenhuma chave. ed25519 nao existe no
-                 OpenSSH anterior ao 6.5 (SLE 11 SP3), e RSA funciona em
-                 todas as versoes do parque. Se a geracao da RSA falhar,
-                 usa a chave que ja existir. Chamada sob
+    NAME: _tipos_de_chave
+    DESCRIPTION: v2.3.4. Ordem dos tipos de chave a distribuir, pelo
+                 banner do sshd do alvo. OpenSSH anterior ao 6.5 (SLE 11)
+                 nao conhece ed25519: so RSA. Nos demais, e quando o
+                 banner nao foi lido, ed25519 primeiro e RSA em seguida.
+    PARAMETER: banner - banner do sshd (ex.: 'SSH-2.0-OpenSSH_7.2') ou ""
+    RETURNS: tuple(str), tipos na ordem de tentativa
+    """
+    versao = versao_openssh(banner)
+    if versao is not None and versao < _VERSAO_MIN_ED25519:
+        return ("rsa",)
+    return ("ed25519", "rsa")
+
+
+def _obtem_chave_do_tipo(tipo, caminho_log_local, verbose):
+    """
+    NAME: _obtem_chave_do_tipo
+    DESCRIPTION: v2.3.4. Devolve o par de chaves do tipo pedido,
+                 gerando-o se nao existir. Chamada sob
                  _lock_chave_ssh_local.
-    PARAMETER: caminho_log_local - log local consolidado
+    PARAMETER: tipo              - "ed25519" ou "rsa"
+               caminho_log_local - log local consolidado
                verbose           - se True, imprime no stdout
     RETURNS: tuple(str, str), (privada, publica) ou (None, None)
     """
-    if os.path.isfile(DEFAULT_SSH_KEY_RSA) and os.path.isfile(DEFAULT_SSH_KEY_RSA + ".pub"):
-        return DEFAULT_SSH_KEY_RSA, DEFAULT_SSH_KEY_RSA + ".pub"
-    priv, pub = _gera_chave_ssh_local(caminho_log_local, verbose, tipo="rsa")
-    if priv is not None:
-        return priv, pub
-    priv, pub = _localiza_chave_ssh_local()
-    if priv is None:
-        priv, pub = _gera_chave_ssh_local(caminho_log_local, verbose)
-    return priv, pub
+    base = DEFAULT_SSH_KEY_RSA if tipo == "rsa" else DEFAULT_SSH_KEY_ED25519
+    if os.path.isfile(base) and os.path.isfile(base + ".pub"):
+        return base, base + ".pub"
+    return _gera_chave_ssh_local(caminho_log_local, verbose, tipo=tipo)
 
 
 _RE_TEMP_SSH_COPY_ID = re.compile(r"^ssh-copy-id\.[A-Za-z0-9]{10}$")
@@ -584,15 +607,18 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
     NAME: prepara_autenticacao_ssh
     DESCRIPTION: Orquestra o bootstrap de autenticacao SSH para um host.
                  Fluxo em ordem:
-                   1. Obtem a chave RSA local (v2.3.1); gera id_rsa se so
-                      houver ed25519 ou nenhuma chave.
-                   2. Sem RSA possivel, usa a chave que existir.
-                   3. Tenta conexao via chave (testa_conexao_ssh).
+                   1. Tenta conexao via chave (testa_conexao_ssh).
                       Caminho feliz: retorna True sem mais nenhuma acao.
-                   4. Se a chave nao esta distribuida e ha senha SSH
-                      disponivel, chama _ssh_copy_id_com_senha (unica
-                      funcao com pty) para distribuir a chave.
-                   5. Apos copy-id, testa a conexao novamente.
+                   2. Sem chave autorizada e sem senha SSH, desiste.
+                   3. v2.3.4: le o banner do sshd e escolhe a ordem dos
+                      tipos de chave (_tipos_de_chave): ed25519 e depois
+                      RSA; so RSA para OpenSSH anterior ao 6.5 (SLE 11).
+                      A chave de cada tipo e gerada se nao existir.
+                   4. Chama _ssh_copy_id_com_senha (unica funcao com
+                      pty) para distribuir a chave. Senha recusada
+                      encerra, sem tentar a chave seguinte.
+                   5. Apos copy-id, testa a conexao novamente; se falhar,
+                      volta ao passo 4 com o tipo seguinte.
                  Esta funcao NAO modifica SSH_OPTS nem o comportamento
                  das funcoes ssh_run / scp_arquivo / testa_conexao_ssh.
                  Apenas garante que o handshake por chave esteja pronto
@@ -613,29 +639,12 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
              bootstrap. False indica falha definitiva (caller marca
              como INACESSIVEL).
     """
-    # 1. Localiza chave existente, 2. gera se nenhuma existir. Protegido
-    # por lock porque a chave e um recurso compartilhado entre todos os
-    # hosts/threads (ver _lock_chave_ssh_local acima) -- sem isso, com
-    # --parallel > 1 e nenhuma chave previa, duas threads podem tentar
-    # gerar a mesma chave ao mesmo tempo e uma falha por corrida.
-    # v2.3.1: a chave distribuida e sempre RSA (ver
-    # _obtem_chave_para_bootstrap).
-    with _lock_chave_ssh_local:
-        chave_priv, chave_pub = _obtem_chave_para_bootstrap(
-            caminho_log_local, verbose)
-
-    if chave_priv is None:
-        gravar_log(caminho_log_local, "ERROR",
-                   "[{}] Bootstrap SSH: nao foi possivel obter uma "
-                   "chave SSH local".format(ip),
-                   verbose, False)
-        return False
-
-    # 3. Caminho feliz: chave ja distribuida (BatchMode=yes funciona)
+    # 1. Caminho feliz: alguma chave do usuario ja esta autorizada
+    # (BatchMode=yes, sem -i: o cliente oferece todas as chaves padrao).
     if testa_conexao_ssh(ip, ssh_user):
         return True
 
-    # 4. Falhou: tenta distribuir a chave via ssh-copy-id
+    # 2. Sem chave autorizada, so a senha permite distribuir uma.
     if not ssh_pass:
         gravar_log(caminho_log_local, nivel_falha,
                    "[{}] Bootstrap SSH: chave nao autorizada e nenhuma "
@@ -644,32 +653,57 @@ def prepara_autenticacao_ssh(ip, ssh_user, ssh_pass,
                    verbose, False)
         return False
 
-    gravar_log(caminho_log_local, "INFO",
-               "[{}] Bootstrap SSH: distribuindo chave publica via "
-               "ssh-copy-id".format(ip),
-               verbose, False)
+    # 3. v2.3.4: o tipo de chave depende do sshd do alvo (banner).
+    banner = versao_servidor_ssh(ip)
+    distribuidas = []
+    for tipo in _tipos_de_chave(banner):
+        # Protegido por lock porque a chave e um recurso compartilhado
+        # entre todos os hosts/threads (ver _lock_chave_ssh_local acima):
+        # sem isso, com --parallel > 1 e nenhuma chave previa, duas
+        # threads podem tentar gerar a mesma chave ao mesmo tempo e uma
+        # falha por corrida.
+        with _lock_chave_ssh_local:
+            chave_priv, chave_pub = _obtem_chave_do_tipo(
+                tipo, caminho_log_local, verbose)
+        if chave_priv is None:
+            continue
 
-    sucesso_copy = _ssh_copy_id_com_senha(
-        ip, ssh_user, ssh_pass, chave_pub,
-        caminho_log_local, verbose, nivel_falha,
-    )
-    if not sucesso_copy:
-        # _ssh_copy_id_com_senha ja registrou o ERROR especifico da etapa
-        return False
-
-    # 5. Reconfere via chave apos copy-id
-    if testa_conexao_ssh(ip, ssh_user):
+        # 4. Distribui a chave via ssh-copy-id
         gravar_log(caminho_log_local, "INFO",
-                   "[{}] Bootstrap SSH: chave distribuida e conexao por "
-                   "chave validada".format(ip),
+                   "[{}] Bootstrap SSH: distribuindo chave publica {} via "
+                   "ssh-copy-id".format(ip, os.path.basename(chave_pub)),
                    verbose, False)
-        return True
+        sucesso_copy = _ssh_copy_id_com_senha(
+            ip, ssh_user, ssh_pass, chave_pub,
+            caminho_log_local, verbose, nivel_falha,
+        )
+        if not sucesso_copy:
+            # _ssh_copy_id_com_senha ja registrou o ERROR especifico da
+            # etapa. Senha recusada nao e reenviada com outra chave.
+            return False
+
+        # 5. Reconfere via chave apos copy-id
+        if testa_conexao_ssh(ip, ssh_user):
+            gravar_log(caminho_log_local, "INFO",
+                       "[{}] Bootstrap SSH: chave {} distribuida e conexao "
+                       "por chave validada".format(
+                           ip, os.path.basename(chave_pub)),
+                       verbose, False)
+            return True
+        distribuidas.append(os.path.basename(chave_pub))
+
+    if not distribuidas:
+        gravar_log(caminho_log_local, "ERROR",
+                   "[{}] Bootstrap SSH: nao foi possivel obter uma "
+                   "chave SSH local".format(ip),
+                   verbose, False)
+        return False
 
     gravar_log(caminho_log_local, nivel_falha,
                "[{}] Bootstrap SSH: ssh-copy-id reportou sucesso mas a "
                "reconexao por chave ainda falha (chave {}, servidor {})".format(
-                   ip, os.path.basename(chave_pub),
-                   versao_servidor_ssh(ip) or "banner nao lido"),
+                   ip, " e ".join(distribuidas),
+                   banner or "banner nao lido"),
                verbose, False)
     return False
 

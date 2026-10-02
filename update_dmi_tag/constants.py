@@ -13,7 +13,8 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.3
+# VERSION: 2.3.4
+# REVISION: 2026-10-02 - v2.3.4 - SCRIPT_VERSION 2.3.4.
 # REVISION: 2026-09-28 - v2.3.3 - SCRIPT_VERSION 2.3.3.
 # REVISION: 2026-09-28 - v2.3.2 - SCRIPT_VERSION 2.3.2.
 # REVISION: 2026-09-24 - v2.3.1 - SCRIPT_VERSION 2.3.1.
@@ -180,7 +181,7 @@ class SegurancaEfiBloqueadaError(Exception):
 # =======================================================================
 # CONSTANTES DE CONFIGURACAO E VALORES PADRAO DO PROJETO
 # =======================================================================
-SCRIPT_VERSION = "2.3.3"
+SCRIPT_VERSION = "2.3.4"
 
 # --- Arquivo de configuracao corporativo ---
 DEFAULT_CONFIG_FILE    = "/etc/BBconfig.conf"
@@ -357,7 +358,9 @@ SSH_OPTS                = [
 # Sao verificadas em ordem (RSA primeiro por compatibilidade legada,
 # ed25519 como padrao moderno). v2.3.1: o bootstrap gera id_rsa sem
 # passphrase quando nao houver RSA, porque ed25519 nao existe no OpenSSH
-# anterior ao 6.5 (SLE 11 SP3); ver ssh_bootstrap._obtem_chave_para_bootstrap.
+# anterior ao 6.5 (SLE 11 SP3). v2.3.4: o tipo distribuido depende do sshd
+# do alvo, ed25519 para OpenSSH 6.5 ou mais novo e RSA para o anterior; ver
+# ssh_bootstrap._tipos_de_chave.
 DEFAULT_SSH_KEY_RSA     = os.path.expanduser("~/.ssh/id_rsa")
 DEFAULT_SSH_KEY_ED25519 = os.path.expanduser("~/.ssh/id_ed25519")
 
