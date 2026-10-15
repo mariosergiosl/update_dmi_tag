@@ -73,3 +73,36 @@ um lote grande (por exemplo, 300 alvos) leva muito tempo em fila.
 Implementar em branch dedicado (por exemplo `feature/parallel-execution`),
 mantendo o `main` estável na v2.1.14 (tag `v2.1.14`). Ao concluir e
 validar, merge no `main` e nova tag `v2.2.0`.
+
+## Futuro, lista completa de inacessíveis por execução
+
+Status: **proposta**, registrada em 15/10/2026, sem versão definida.
+
+### Motivação
+
+O arquivo `hosts_inacessiveis_<data>_<hora>.txt` é gravado ao fim da
+triagem (Fase 1), no formato aceito por `--hosts`. Ele não traz os hosts
+que passam na triagem e terminam `INACESSIVEL` na Fase 2, que aparecem
+só na tabela de resumo do log consolidado (num lote de 197 hosts, 4 de
+55). O nome leva a hora da triagem, não o nome do log, o que dificulta
+associar o arquivo à execução quando há vários lotes no mesmo dia. Uma
+execução interrompida antes do fim da triagem não grava o arquivo.
+
+### Desenho
+
+1. Gravar o arquivo no fim da execução, depois da Fase 2, com os hosts
+   descartados na triagem e os que terminaram `INACESSIVEL` na Fase 2,
+   no formato `IP,BEM` aceito por `--hosts`.
+2. Derivar o nome do arquivo do `--log-local` (por exemplo,
+   `<log>_inacessiveis.txt`), em vez da hora.
+3. Avaliar separar o motivo (sem resposta na porta 22, senha recusada,
+   falha na Fase 2) em comentário por linha ou em arquivo à parte, desde
+   que o arquivo continue aceito por `--hosts` sem edição.
+
+### Contorno até lá
+
+A lista completa sai do log consolidado cruzado com a lista de entrada:
+
+```
+awk -F'|' 'NR==FNR { if ($14 ~ /INACESSIVEL/) { gsub(/ /,"",$2); x[$2]=1 }; next } { split($0,a,","); if (a[1] in x) print }' <log> <lista_hosts> > inacessiveis.txt
+```
