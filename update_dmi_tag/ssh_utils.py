@@ -16,7 +16,12 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.5
+# VERSION: 2.3.6
+# REVISION: 2026-10-15 - v2.3.6 - HostKeyAlgorithms=+ssh-rsa acrescentado junto com
+#                        PubkeyAcceptedAlgorithms=+ssh-rsa para cliente OpenSSH 8.8 ou
+#                        mais novo. Defeito de campo 2026-10-14: 3 SLE 11 cujo sshd so
+#                        oferece chave de servidor ssh-rsa/ssh-dss terminaram INACESSIVEL
+#                        com "no matching host key type found".
 # REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.

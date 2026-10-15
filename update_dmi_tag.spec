@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           update_dmi_tag
-Version:        2.3.5
+Version:        2.3.6
 Release:        0
 Summary:        Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag
 
@@ -93,6 +93,19 @@ chmod 1777 /opt/%{name} 2>/dev/null || true
 %{_bindir}/update_dmi_tag
 
 %changelog
+* Thu Oct 15 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.6-0
+- Ao fim da execucao, os hosts INACESSIVEL da triagem e da Fase 2
+  sao gravados em <log>_inacessiveis_rede.txt (porta 22 sem
+  resposta) e <log>_inacessiveis_acesso.txt (login falhou), no
+  formato aceito por --hosts. O arquivo hosts_inacessiveis da
+  triagem continua sendo gravado.
+- Cliente OpenSSH 8.8 ou mais novo passa a aceitar tambem chave de
+  servidor ssh-rsa (HostKeyAlgorithms=+ssh-rsa), inclusive no
+  ssh-copy-id: sshd que so oferece ssh-rsa/ssh-dss terminava
+  INACESSIVEL com "no matching host key type found".
+- Falha do ssh-copy-id registrada numa linha so, com a mensagem
+  de erro real.
+
 * Fri Oct 02 2026 Mario Luz <mario.mssl@gmail.com> - 2.3.5-0
 - Publica as mudancas da 2.3.4 (abaixo), que rodou so em teste no
   ambiente real, com versoes intermediarias do codigo; numero novo para

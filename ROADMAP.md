@@ -78,6 +78,12 @@ validar, merge no `main` e nova tag `v2.2.0`.
 
 Status: **proposta**, registrada em 15/10/2026, sem versão definida.
 
+Atualização de 15/10/2026: **implementado na v2.3.6**. Os itens 1 e 2 do
+desenho entraram como descritos; o item 3 virou um arquivo por motivo
+(`<log>_inacessiveis_rede.txt` e `<log>_inacessiveis_acesso.txt`), em vez
+de comentário por linha. O arquivo da triagem foi mantido. Comportamento
+na seção 8.8 do `manual_operacao.md`.
+
 ### Motivação
 
 O arquivo `hosts_inacessiveis_<data>_<hora>.txt` é gravado ao fim da

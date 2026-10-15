@@ -15,7 +15,10 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.5
+# VERSION: 2.3.6
+# REVISION: 2026-10-15 - v2.3.6 - registro ganha motivo_inacessivel ("rede" ou "acesso"),
+#                        preenchido na triagem (OFFLINE ou NEGADO) e na Fase 2 (porta
+#                        fechada ou bootstrap que falhou), para as listas por motivo.
 # REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.

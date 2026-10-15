@@ -2,7 +2,7 @@
 
 Utilitario para validacao de patrimonio e gravacao do campo DMI Asset Tag na BIOS AMI.
 
-**Versao atual: v2.3.5**
+**Versao atual: v2.3.6**
 
 ## Visao Geral
 
@@ -96,6 +96,10 @@ Desde a v2.3.2, `--bios-digitos` e `--bbconfig-digitos` (13 ou 14) escolhem, cad
 
 Na v2.3.3, o padrao do arquivo de configuracao passou a 13 (o formato do gestor oficial do arquivo) e voltou a 14 em 30/09/2026, igual ao da BIOS, sem nova versao; a variavel ausente no arquivo passa a ser acrescentada; e um numero de 14 posicoes com digito verificador errado resulta INVALIDO, sem gravar, para o operador corrigir o valor e rodar de novo.
 
+Na v2.3.5, o teste de conexao SSH espera ate 30 segundos (antes 5), ajustavel por `--ssh-timeout`, e o mesmo valor e somado ao tempo de cada comando `ssh` e `scp`: em equipamentos que levam de 7 a 11 segundos para concluir o login, a senha era aceita, a chave gravada e o equipamento terminava INACESSIVEL. A chave distribuida passa a depender do servidor SSH do equipamento: ed25519 para OpenSSH 6.5 ou mais novo e RSA para o anterior (SLE 11 SP3), trocando para a outra se a primeira nao entrar. Login lento aparece como aviso no log. Detalhes na secao 3.1 do manual.
+
+Na v2.3.6, ao fim da execucao, os equipamentos INACESSIVEL da triagem e da Fase 2 sao gravados em `<log>_inacessiveis_rede.txt` (porta 22 sem resposta) e `<log>_inacessiveis_acesso.txt` (login falhou), no formato aceito por `--hosts`; o arquivo `hosts_inacessiveis_<data>_<hora>.txt` da triagem continua sendo gravado. Com cliente OpenSSH 8.8 ou mais novo, a ferramenta passa a aceitar tambem chave de servidor `ssh-rsa` (`HostKeyAlgorithms=+ssh-rsa`), inclusive no `ssh-copy-id`: equipamentos cujo servidor SSH so oferece `ssh-rsa` e `ssh-dss` terminavam INACESSIVEL com `no matching host key type found`. Detalhes nas secoes 3.1, 3.4 e 8.8 do manual.
+
 ### 6. Guia Rapido das Opcoes
 
 A secao 7 do manual e a referencia tecnica. Esta e a leitura rapida, para o
@@ -117,6 +121,7 @@ operador decidir o que usar.
 | `--ssh-pass-file ARQUIVO` | Arquivo com a senha desse usuario, no modo antigo |
 | `--ssh-pass SENHA` | A senha digitada na propria linha de comando. Evitar: fica no historico |
 | `--sudo-pass SENHA` | Senha do sudo, quando ele pede e nao e a mesma do login |
+| `--ssh-timeout SEGUNDOS` | Quanto esperar o login em cada maquina. Padrao 30. Aumentar so se o log disser `teste cortado pelo limite` (desde a 2.3.5) |
 
 **O que gravar e em que formato**
 

@@ -30,7 +30,10 @@
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
 #
-# VERSION: 2.3.5
+# VERSION: 2.3.6
+# REVISION: 2026-10-15 - v2.3.6 - chama grava_inacessiveis_por_motivo apos a tabela de
+#                        resumo e registra no log o caminho de cada lista; o arquivo
+#                        hosts_inacessiveis_<data>_<hora>.txt da triagem continua igual.
 # REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.

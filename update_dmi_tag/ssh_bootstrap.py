@@ -21,7 +21,11 @@
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.5
+# VERSION: 2.3.6
+# REVISION: 2026-10-15 - v2.3.6 - o ssh-copy-id recebe as opcoes de SSH_OPTS_EXTRA
+#                        (compatibilidade com OpenSSH antigo); a cauda da saida do
+#                        ssh-copy-id no log sai numa linha so (_cauda_saida): o \r do pty
+#                        quebrava a mensagem no log consolidado e escondia o erro real.
 # REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.

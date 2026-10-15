@@ -8,10 +8,18 @@
 #              le_arquivo_hosts aceita "IP" ou "IP,BEM_NUMERO" por linha,
 #              ignorando linhas vazias, comentarios inteiros (#...) e
 #              comentarios em fim de linha.
+#              grava_inacessiveis_por_motivo (v2.3.6) grava, ao fim da
+#              execucao, as listas de inacessiveis por motivo (rede ou
+#              acesso) no mesmo formato.
 #
 # AUTHOR: Mario Luz mario.luz@suse.com
 # COMPANY: SUSE
-# VERSION: 2.3.5
+# VERSION: 2.3.6
+# REVISION: 2026-10-15 - v2.3.6 - grava_inacessiveis_por_motivo: ao fim da execucao, grava
+#                        <log>_inacessiveis_rede.txt e <log>_inacessiveis_acesso.txt
+#                        (IP,BEM_NUMERO, aceitos por --hosts), com os inacessiveis da
+#                        triagem e da Fase 2. Antes so havia o arquivo da triagem, sem
+#                        os da Fase 2 (4 de 55 num lote de 2026-10-14) e sem o motivo.
 # REVISION: 2026-10-02 - v2.3.5 - atualizacao de numero de versao para
 #                        consistencia com o restante do pacote; sem mudanca
 #                        funcional neste arquivo.
