@@ -6,7 +6,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 SAIDA = os.environ.get("DIAGRAMAS_SAIDA", ".")
-from svg_helper import Diagrama, COR_INICIO_FIM, COR_ACAO, COR_OK, COR_ALERTA, COR_DECISAO
+from svg_helper import Diagrama, COR_INICIO_FIM, COR_ACAO, COR_OK, COR_ALERTA, COR_DECISAO, _ponta
 
 W = 1220
 H = 940
@@ -48,8 +48,9 @@ def liga(a, b, tracejado=False, dupla_seta=False):
     if tracejado:
         d.partes.append(
             '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#999999" '
-            'stroke-width="1.3" stroke-dasharray="4,3" '
-            'marker-end="url(#seta)"/>'.format(p1[0], p1[1], p2[0], p2[1]))
+            'stroke-width="1.3" stroke-dasharray="4,3"/>'.format(
+                p1[0], p1[1], p2[0], p2[1]))
+        d.partes.append(_ponta(p1[0], p1[1], p2[0], p2[1]))
     else:
         d.seta(p1[0], p1[1], p2[0], p2[1])
 

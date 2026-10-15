@@ -10,6 +10,8 @@ Catalogo (defeito ou risco que motivou cada caso):
   D2 os diagramas 01, 02, 05, 06 e 07 ficaram parados na linha 2.2 (sem
      perfis de acesso, sem acesso.py, sem as listas por motivo da 2.3.6)
   D3 gera_diagramas.py nao sobrescreve PNG existente sem -f
+  D4 as setas saiam sem ponta em todos os PNG desde 07/2026: o svglib, que
+     faz a conversao, ignora marker-end; a ponta passou a ser um poligono
 """
 import glob
 import os
@@ -72,6 +74,12 @@ class TestGeradores(unittest.TestCase):
     def test_d2_07_inacessivel_por_motivo(self):
         self.assertIn("rede: porta 22 sem resposta", self.svg["07"])
         self.assertIn("acesso: sem chave e sem senha", self.svg["07"])
+
+    def test_d4_setas_com_ponta_sem_marker(self):
+        for n, texto in self.svg.items():
+            self.assertNotIn("marker-end", texto, n)
+        for n in ("01", "02", "03", "04", "05", "06", "07"):
+            self.assertGreater(self.svg[n].count('<polygon points="'), 3, n)
 
     def test_regressao_03_04_08_inalterados(self):
         """Os que nao mudaram continuam com o conteudo de sempre."""

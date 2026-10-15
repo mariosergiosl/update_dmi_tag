@@ -43,6 +43,22 @@ def _wrap(texto, max_chars):
     return linhas
 
 
+def _ponta(xa, ya, xb, yb, tam=9.0, meia=4.0):
+    """Return a filled triangle polygon for an arrow tip at (xb, yb).
+
+    The tip points from (xa, ya) to (xb, yb). Drawn as a polygon because
+    svglib, used for the PNG conversion, ignores SVG markers.
+    """
+    import math
+    dx, dy = xb - xa, yb - ya
+    n = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / n, dy / n
+    bx, by = xb - ux * tam, yb - uy * tam
+    pts = [(xb, yb), (bx - uy * meia, by + ux * meia), (bx + uy * meia, by - ux * meia)]
+    return '<polygon points="{}" fill="{}" stroke="none"/>'.format(
+        " ".join("{:.1f},{:.1f}".format(px, py) for px, py in pts), COR_SETA)
+
+
 class Diagrama:
     def __init__(self, largura, altura, titulo=None):
         self.largura = largura
@@ -146,20 +162,24 @@ class Diagrama:
             mx = (x1 + x2) / 2
             self.partes.append(
                 '<path d="M {} {} Q {} {}, {} {}" fill="none" stroke="{}" '
-                'stroke-width="1.6"{} marker-end="url(#seta)"/>'.format(
+                'stroke-width="1.6"{}/>'.format(
                     x1, y1, mx, y1, x2, y2, COR_SETA, estilo))
+            self.partes.append(_ponta(mx, y1, x2, y2))
         else:
             self.partes.append(
                 '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" '
-                'stroke-width="1.6"{} marker-end="url(#seta)"/>'.format(
+                'stroke-width="1.6"{}/>'.format(
                     x1, y1, x2, y2, COR_SETA, estilo))
+            self.partes.append(_ponta(x1, y1, x2, y2))
 
     def linha_cotovelo(self, pontos, tracejada=False):
         estilo = ' stroke-dasharray="4,3"' if tracejada else ""
         d = "M " + " L ".join("{} {}".format(px, py) for px, py in pontos)
         self.partes.append(
-            '<path d="{}" fill="none" stroke="{}" stroke-width="1.6"{} '
-            'marker-end="url(#seta)"/>'.format(d, COR_SETA, estilo))
+            '<path d="{}" fill="none" stroke="{}" stroke-width="1.6"{}/>'.format(
+                d, COR_SETA, estilo))
+        (xa, ya), (xb, yb) = pontos[-2], pontos[-1]
+        self.partes.append(_ponta(xa, ya, xb, yb))
 
     def linha_simples(self, x1, y1, x2, y2, cor=None, largura=1.3,
                        tracejada=False):
