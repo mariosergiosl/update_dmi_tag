@@ -385,6 +385,24 @@ def _resolve_ssh_pass(args):
 
 
 
+def _cauda_saida(saida_completa, tamanho=200):
+    """
+    NAME: _cauda_saida
+    DESCRIPTION: v2.3.6. Ultimos caracteres da saida do ssh-copy-id, numa
+                 linha so, para o log de falha. A saida do pty termina
+                 linha com \\r\\n; antes so o \\n era trocado, o \\r sobrava
+                 no log por host e virava quebra de linha no log
+                 consolidado, separando a mensagem de erro real (ex.: "no
+                 matching host key type found") da linha com o IP.
+    PARAMETER: saida_completa - lista de pedacos de texto lidos do pty
+               tamanho        - quantos caracteres finais manter
+    RETURNS: str, cauda com as quebras de linha trocadas por " | "
+    """
+    texto = "".join(saida_completa)[-tamanho:]
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    return texto.replace("\n", " | ").strip()
+
+
 def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
                             caminho_log_local, verbose, nivel_falha="ERROR"):
     """
@@ -441,8 +459,13 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
         "-o", "StrictHostKeyChecking=no",
         "-o", "PreferredAuthentications=password,keyboard-interactive",
         "-o", "PubkeyAuthentication=no",
-        "{}@{}".format(ssh_user, ip),
     ]
+    # v2.3.6: as opcoes de compatibilidade com OpenSSH antigo
+    # (habilita_ssh_rsa_legado) tambem valem para o ssh-copy-id. Sem elas,
+    # sshd que so oferece chave de servidor ssh-rsa terminava "no matching
+    # host key type found" antes de pedir a senha.
+    argv += ssh_utils.SSH_OPTS_EXTRA
+    argv.append("{}@{}".format(ssh_user, ip))
 
     try:
         pid, fd = pty.fork()
@@ -625,7 +648,7 @@ def _ssh_copy_id_com_senha(ip, ssh_user, senha, caminho_chave_pub,
                    verbose, False)
     else:
         # Captura os ultimos 200 caracteres da saida para log de falha
-        cauda = ("".join(saida_completa))[-200:].replace("\n", " | ").strip()
+        cauda = _cauda_saida(saida_completa)
         gravar_log(caminho_log_local, nivel_falha,
                    "[{}] Bootstrap SSH: ssh-copy-id encerrou com rc={} "
                    "(cauda: {})".format(ip, rc, cauda or "vazio"),

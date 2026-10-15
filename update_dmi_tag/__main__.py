@@ -212,7 +212,7 @@ from .patrimonio import (
 )
 from .bbconfig import le_valor_configuracao, sincroniza_bbconfig_local
 from .write_cascade import tenta_escrever_tag_local
-from .hosts import le_arquivo_hosts
+from .hosts import le_arquivo_hosts, grava_inacessiveis_por_motivo
 from .host_processor import processa_host_remoto, triagem_hosts_remotos
 from .ssh_utils import define_timeout_teste_conexao, habilita_ssh_rsa_legado
 from .ssh_bootstrap import limpa_temporarios_ssh_copy_id
@@ -929,6 +929,17 @@ def main():
 
         monta_tabela_resumo(registros, args.log_local, args.verbose, args.csv,
                             write_ativo=args.write)
+
+        # v2.3.6: inacessiveis da triagem e da Fase 2, separados por motivo
+        # (rede ou acesso), no formato do --hosts, com nome derivado do log.
+        try:
+            for motivo, caminho, qtd in grava_inacessiveis_por_motivo(
+                    registros, hosts, args.log_local):
+                _log_local("INFO", "Inacessiveis por {} ({}) gravados em: {}".format(
+                    motivo, qtd, caminho))
+        except Exception as e:
+            _log_local("WARNING", "Nao foi possivel gravar as listas de "
+                       "inacessiveis por motivo: {}".format(e))
 
         # v2.3.1: pastas ~/.ssh/ssh-copy-id.* que o ssh-copy-id deixou ao
         # ser interrompido nesta execucao (so depois de todos os hosts).

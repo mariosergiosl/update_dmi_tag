@@ -306,6 +306,9 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         "mac":             "N/D",
         "teste_escrita":   "N/A",
         "acesso":          "N/D",
+        # v2.3.6: "rede" ou "acesso" quando o host termina INACESSIVEL;
+        # usado so nas listas de inacessiveis por motivo (hosts.py).
+        "motivo_inacessivel": "",
     }
 
     def _log(nivel, msg, sudo_cmd=""):
@@ -331,6 +334,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
         if not testa_porta_ssh(ip, timeout=2.0):
             _log("ERROR", "Host offline ou porta SSH (TCP 22) fechada.")
             registro["resultado"] = "INACESSIVEL"
+            registro["motivo_inacessivel"] = "rede"
             return registro
 
         # 1.b Bootstrap de autenticacao SSH (gera/distribui chave se necessario).
@@ -356,6 +360,7 @@ def processa_host_remoto(ip, bem_numero_lista, args, caminho_log_local,
                 break
         if not acesso_ok:
             _log("ERROR", "Host inacessivel via SSH (bootstrap de autenticacao falhou).")
+            registro["motivo_inacessivel"] = "acesso"
             return registro
 
     if len(perfis) > 1:
@@ -735,13 +740,16 @@ def _executa_acoes_production(ip, ssh_user, sudo_cmd, args,
     _log("INFO", "[PRODUCTION] Comando reboot enviado.")
 
 
-def _registro_descartado(ip):
+def _registro_descartado(ip, motivo="rede"):
     """
     NAME: _registro_descartado
     DESCRIPTION: Monta o registro placeholder (campos "N/D"/"N/A") usado
                  na tabela de resumo para um host descartado na triagem
                  (Fase 1), seja por estar offline ou por acesso negado.
-    PARAMETER: ip - endereco IP do host descartado
+    PARAMETER: ip     - endereco IP do host descartado
+               motivo - v2.3.6: "rede" (porta 22 sem resposta) ou "acesso"
+                        (sem chave e sem senha), gravado em
+                        motivo_inacessivel para as listas por motivo
     RETURNS: dict, registro no mesmo formato usado por processa_host_remoto
     """
     return {
@@ -764,6 +772,7 @@ def _registro_descartado(ip):
         "mac":             "N/D",
         "teste_escrita":   "N/A",
         "acesso":          "N/D",
+        "motivo_inacessivel": motivo,
     }
 
 
@@ -845,7 +854,7 @@ def triagem_hosts_remotos(hosts, args, caminho_log_local):
             gravar_log(caminho_log_local, "INFO",
                        _linha(ip, "OFFLINE", "N/A", OBS_OFFLINE),
                        args.verbose, False)
-            registros_descartados.append(_registro_descartado(ip))
+            registros_descartados.append(_registro_descartado(ip, "rede"))
             hosts_descartados.append((ip, bem_lista))
             continue
 
@@ -872,7 +881,7 @@ def triagem_hosts_remotos(hosts, args, caminho_log_local):
             gravar_log(caminho_log_local, "INFO",
                        _linha(ip, "ONLINE", "NEGADO (Chave ausente/Sem senha)", OBS_NEGADO),
                        args.verbose, False)
-            registros_descartados.append(_registro_descartado(ip))
+            registros_descartados.append(_registro_descartado(ip, "acesso"))
             hosts_descartados.append((ip, bem_lista))
 
     gravar_log(caminho_log_local, "INFO", divisor, args.verbose, False)

@@ -692,6 +692,56 @@ class TestTriagemComPerfisV230(unittest.TestCase):
         self.assertEqual(hosts_desc, [("192.0.2.1", "")])
 
 
+class TestMotivoInacessivelV236(_BasePerfis, unittest.TestCase):
+    """v2.3.6: todo INACESSIVEL leva o motivo (rede ou acesso), na triagem e
+    na Fase 2, para as listas por motivo do fim da execucao."""
+
+    def _triagem(self, porta, senha):
+        op = acesso.Perfil("operador", "f4683594", senha, ())
+        args = types.SimpleNamespace(verbose=False, ssh_user="x",
+                                     ssh_pass_efetiva="", sudo_pass="",
+                                     perfis_acesso=[op])
+        with mock.patch.object(hp, "testa_porta_ssh", return_value=porta), \
+             mock.patch.object(hp, "testa_conexao_ssh", return_value=False), \
+             mock.patch.object(hp, "gravar_log"):
+            _, descartados, _ = hp.triagem_hosts_remotos(
+                [("192.0.2.1", "")], args, "")
+        return descartados
+
+    def test_triagem_offline_e_rede(self):
+        descartados = self._triagem(porta=False, senha="a")
+        self.assertEqual(descartados[0]["motivo_inacessivel"], "rede")
+
+    def test_triagem_negado_e_acesso(self):
+        descartados = self._triagem(porta=True, senha="")
+        self.assertEqual(descartados[0]["motivo_inacessivel"], "acesso")
+
+    def test_fase2_bootstrap_falhou_e_acesso(self):
+        """Defeito 2026-10-14: 4 de 55 inacessiveis eram da Fase 2."""
+        registro, _, _ = self._roda(lambda *a, **k: False,
+                                    lambda ip, u, s="": ("sudo", True))
+        self.assertEqual(registro["resultado"], "INACESSIVEL")
+        self.assertEqual(registro["motivo_inacessivel"], "acesso")
+
+    def test_fase2_porta_fechada_e_rede(self):
+        """1 caso em 2026-10-14: ligado na triagem, desligado na Fase 2."""
+        with mock.patch.object(hp, "testa_porta_ssh", return_value=False), \
+             mock.patch.object(hp, "prepara_autenticacao_ssh") as m_prep, \
+             mock.patch.object(hp, "gravar_log_remoto"), \
+             mock.patch.object(hp, "gravar_log"):
+            registro = hp.processa_host_remoto("192.0.2.1", "", self._args(), "")
+        self.assertEqual(registro["resultado"], "INACESSIVEL")
+        self.assertEqual(registro["motivo_inacessivel"], "rede")
+        m_prep.assert_not_called()
+
+    def test_host_gravado_sem_motivo(self):
+        """Regressao: host que entra nao ganha motivo de inacessivel."""
+        registro, _, _ = self._roda(lambda *a, **k: True,
+                                    lambda ip, u, s="": ("sudo", True))
+        self.assertEqual(registro["resultado"], "OK-amibios")
+        self.assertEqual(registro["motivo_inacessivel"], "")
+
+
 class TestPadraoArquivoTrezeV233(unittest.TestCase):
     """Padrao de --bbconfig-digitos na linha de comando: 13 na v2.3.3
     original, 14 desde o ajuste de 30/09/2026, igual ao de --bios-digitos.

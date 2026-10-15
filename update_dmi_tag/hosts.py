@@ -133,3 +133,57 @@ def le_arquivo_hosts(caminho_hosts):
     return hosts
 
 
+# v2.3.6: motivos de INACESSIVEL que viram lista propria; outro valor (ou
+# vazio) vai para "indeterminado", em vez de ser adivinhado.
+MOTIVOS_INACESSIVEL = ("rede", "acesso")
+
+
+def grava_inacessiveis_por_motivo(registros, hosts, caminho_log_local):
+    """
+    NAME: grava_inacessiveis_por_motivo
+    DESCRIPTION: v2.3.6. Ao fim da execucao, grava os hosts que terminaram
+                 INACESSIVEL, na triagem ou na Fase 2, separados pelo
+                 motivo, no formato aceito por --hosts (IP,BEM_NUMERO):
+                   <log>_inacessiveis_rede.txt   - porta 22 sem resposta
+                                                   (desligado ou sem rede)
+                   <log>_inacessiveis_acesso.txt - porta respondeu e o
+                                                   login falhou (senha
+                                                   recusada, sem senha,
+                                                   ssh-copy-id com erro)
+                 <log> e o --log-local sem a extensao. Arquivo de motivo
+                 sem nenhum host nao e criado. A ordem e a da lista de
+                 hosts e o BEM_NUMERO e o da propria lista. O arquivo
+                 hosts_inacessiveis_<data>_<hora>.txt da triagem continua
+                 sendo gravado como antes.
+    PARAMETER: registros         - lista de dicts da tabela de resumo
+               hosts             - lista de (ip, bem) de le_arquivo_hosts
+               caminho_log_local - log consolidado local (--log-local)
+    RETURNS: list of tuple(str, str, int), [(motivo, caminho, qtd), ...]
+             dos arquivos gravados
+    """
+    motivo_por_ip = {}
+    for registro in registros:
+        if registro.get("resultado") == "INACESSIVEL":
+            motivo = registro.get("motivo_inacessivel", "")
+            if motivo not in MOTIVOS_INACESSIVEL:
+                motivo = "indeterminado"
+            motivo_por_ip[registro.get("ip")] = motivo
+
+    base = os.path.splitext(os.path.abspath(caminho_log_local))[0]
+    gravados = []
+    for motivo in MOTIVOS_INACESSIVEL + ("indeterminado",):
+        linhas = []
+        vistos = set()
+        for ip, bem in hosts:
+            if motivo_por_ip.get(ip) == motivo and ip not in vistos:
+                vistos.add(ip)
+                linhas.append("{},{}\n".format(ip, bem) if bem else "{}\n".format(ip))
+        if not linhas:
+            continue
+        caminho = "{}_inacessiveis_{}.txt".format(base, motivo)
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.writelines(linhas)
+        gravados.append((motivo, caminho, len(linhas)))
+    return gravados
+
+

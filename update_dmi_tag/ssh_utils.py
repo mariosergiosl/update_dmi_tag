@@ -128,6 +128,10 @@ from .logging_utils import gravar_log_remoto
 # execucao, antes das threads do --parallel.
 SSH_OPTS_EXTRA = []
 _OPCAO_SSH_RSA = "PubkeyAcceptedAlgorithms=+ssh-rsa"
+# v2.3.6: mesma restricao do OpenSSH 8.8 para a chave do SERVIDOR. Alvo
+# cujo sshd so oferece chave de servidor ssh-rsa/ssh-dss terminava
+# "no matching host key type found" (3 SLE 11 em 2026-10-14).
+_OPCAO_HOSTKEY_RSA = "HostKeyAlgorithms=+ssh-rsa"
 
 # v2.3.4: tempo maximo do teste de conexao por chave (opcao --ssh-timeout).
 # Host sem SSH ja e descartado antes pelo teste de porta (2 s) e chave
@@ -161,6 +165,11 @@ def habilita_ssh_rsa_legado():
                  Acrescenta PubkeyAcceptedAlgorithms=+ssh-rsa as opcoes do
                  ssh e do scp; o '+' so amplia a lista, e servidores
                  modernos continuam negociando rsa-sha2. Idempotente.
+                 v2.3.6: acrescenta tambem HostKeyAlgorithms=+ssh-rsa,
+                 para o sshd que so oferece chave de servidor ssh-rsa
+                 (sem ela: "no matching host key type found"). As duas
+                 opcoes ficam em SSH_OPTS_EXTRA, que o ssh-copy-id do
+                 bootstrap tambem recebe.
                  Chamada uma vez, no inicio do modo remoto.
     PARAMETER: nenhum
     RETURNS: str, versao do cliente e a decisao, para o log
@@ -175,9 +184,10 @@ def habilita_ssh_rsa_legado():
     versao = versao_openssh(texto)
     if versao is None or versao < (8, 8):
         return "{}; ssh-rsa ja aceito pelo cliente".format(texto or "?")
-    if _OPCAO_SSH_RSA not in SSH_OPTS_EXTRA:
-        SSH_OPTS_EXTRA.extend(["-o", _OPCAO_SSH_RSA])
-        SSH_OPTS.extend(["-o", _OPCAO_SSH_RSA])
+    for opcao in (_OPCAO_SSH_RSA, _OPCAO_HOSTKEY_RSA):
+        if opcao not in SSH_OPTS_EXTRA:
+            SSH_OPTS_EXTRA.extend(["-o", opcao])
+            SSH_OPTS.extend(["-o", opcao])
     return "{}; ssh-rsa habilitado para alvos com OpenSSH antigo".format(texto)
 
 

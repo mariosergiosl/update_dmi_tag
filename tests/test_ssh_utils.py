@@ -69,8 +69,10 @@ class TestHabilitaSshRsaLegadoV231(unittest.TestCase):
         self._com_cliente("OpenSSH_9.6p1, OpenSSL 3.5.0 8 Apr 2025")
         self._com_cliente("OpenSSH_9.6p1, OpenSSL 3.5.0 8 Apr 2025")
         self.assertEqual(su.SSH_OPTS.count("PubkeyAcceptedAlgorithms=+ssh-rsa"), 1)
+        # v2.3.6: a lista passou a ter tambem a opcao da chave de servidor.
         self.assertEqual(su.SSH_OPTS_EXTRA,
-                         ["-o", "PubkeyAcceptedAlgorithms=+ssh-rsa"])
+                         ["-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+                          "-o", "HostKeyAlgorithms=+ssh-rsa"])
 
     def test_cliente_antigo_nao_muda(self):
         """8.4 ainda aceita ssh-rsa e nem sempre conhece a opcao nova."""
@@ -91,6 +93,57 @@ class TestHabilitaSshRsaLegadoV231(unittest.TestCase):
                                return_value=mock.Mock(returncode=0)) as m:
             su.scp_arquivo("192.0.2.1", "root", "/tmp/a", "/tmp/b")
         self.assertIn("PubkeyAcceptedAlgorithms=+ssh-rsa", m.call_args[0][0])
+
+
+class TestHostKeyRsaV236(unittest.TestCase):
+    """v2.3.6, campo 2026-10-14: 3 SLE 11 com sshd que so oferece chave de
+    servidor ssh-rsa/ssh-dss terminaram "no matching host key type found";
+    a 2.3.1 so habilitava ssh-rsa para a chave do usuario."""
+
+    def setUp(self):
+        self.opts = list(su.SSH_OPTS)
+        self.extra = list(su.SSH_OPTS_EXTRA)
+
+    def tearDown(self):
+        su.SSH_OPTS[:] = self.opts
+        su.SSH_OPTS_EXTRA[:] = self.extra
+
+    def _com_cliente(self, texto):
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(stderr=texto, stdout="")):
+            return su.habilita_ssh_rsa_legado()
+
+    def test_cliente_novo_ganha_hostkey_uma_vez(self):
+        self._com_cliente("OpenSSH_9.6p1, OpenSSL 3.5.0 8 Apr 2025")
+        self._com_cliente("OpenSSH_9.6p1, OpenSSL 3.5.0 8 Apr 2025")
+        self.assertEqual(su.SSH_OPTS.count("HostKeyAlgorithms=+ssh-rsa"), 1)
+        self.assertEqual(su.SSH_OPTS_EXTRA.count("HostKeyAlgorithms=+ssh-rsa"), 1)
+
+    def test_cliente_8_8_exato_ganha_hostkey(self):
+        """Limite: 8.8 e a primeira versao que recusa ssh-rsa."""
+        self._com_cliente("OpenSSH_8.8p1")
+        self.assertIn("HostKeyAlgorithms=+ssh-rsa", su.SSH_OPTS)
+
+    def test_cliente_antigo_nao_ganha_hostkey(self):
+        self._com_cliente("OpenSSH_8.7p1")
+        self.assertNotIn("HostKeyAlgorithms=+ssh-rsa", su.SSH_OPTS)
+        self.assertEqual(su.SSH_OPTS_EXTRA, [])
+
+    def test_ssh_run_recebe_hostkey(self):
+        """Colisao: o ssh dos comandos remotos usa SSH_OPTS."""
+        self._com_cliente("OpenSSH_9.6p1")
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="",
+                                                      stderr="")) as m:
+            su.ssh_run("192.0.2.1", "root", "true")
+        self.assertIn("HostKeyAlgorithms=+ssh-rsa", m.call_args[0][0])
+
+    def test_scp_recebe_hostkey(self):
+        self._com_cliente("OpenSSH_9.6p1")
+        with mock.patch.object(su.subprocess, "run",
+                               return_value=mock.Mock(returncode=0)) as m:
+            su.scp_arquivo("192.0.2.1", "root", "/tmp/a", "/tmp/b")
+        self.assertIn("HostKeyAlgorithms=+ssh-rsa", m.call_args[0][0])
 
 
 class TestGravarLogRemotoV231(unittest.TestCase):

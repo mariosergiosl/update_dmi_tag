@@ -115,6 +115,103 @@ class TestSshCopyIdComSenha(unittest.TestCase):
         self.assertEqual(senhas, ["senha#;%"])
 
 
+class TestCaudaSaidaV236(unittest.TestCase):
+    """v2.3.6, campo 2026-10-14: o \\r da saida do pty quebrava a cauda em
+    varias linhas no log consolidado e escondia a mensagem real."""
+
+    SAIDA = ["/usr/bin/ssh-copy-id: INFO: attempting to log in with the new "
+             "key(s), to filter out any that are already installed\r\n\r\n",
+             "/usr/bin/ssh-copy-id: ERROR: Unable to negotiate with 192.0.2.1 "
+             "port 22: no matching host key type found. Their offer: "
+             "ssh-rsa,ssh-dss\r\n\r\n"]
+
+    def test_cauda_fica_numa_linha(self):
+        cauda = sb._cauda_saida(self.SAIDA)
+        self.assertNotIn("\r", cauda)
+        self.assertNotIn("\n", cauda)
+        self.assertIn("no matching host key type found", cauda)
+
+    def test_cauda_mantem_o_final(self):
+        """Regressao: continua cortando nos ultimos 200 caracteres."""
+        cauda = sb._cauda_saida(["a" * 500 + "FIM"])
+        self.assertTrue(cauda.endswith("FIM"))
+        self.assertEqual(len(cauda), 200)
+
+    def test_quebra_so_com_lf_continua_igual(self):
+        """Regressao: o \\n sozinho segue virando ' | '."""
+        self.assertEqual(sb._cauda_saida(["um\ndois\n"]), "um | dois |")
+
+
+# ssh-copy-id falso que anota os argumentos e responde como o sshd que so
+# oferece chave de servidor ssh-rsa (campo 2026-10-14), com \r\n do pty.
+FALSO_ARGS = """#!/bin/sh
+echo "$@" > "$CONTADOR"
+printf '/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s)\\r\\n\\r\\n'
+printf '/usr/bin/ssh-copy-id: ERROR: Unable to negotiate with 192.0.2.1 port 22: '
+printf 'no matching host key type found. Their offer: ssh-rsa,ssh-dss\\r\\n'
+exit 1
+"""
+
+
+@unittest.skipUnless(os.name == "posix", "pty so existe em POSIX")
+class TestSshCopyIdRecebeOpcoesV236(unittest.TestCase):
+    """v2.3.6: o ssh-copy-id recebe as opcoes de SSH_OPTS_EXTRA e a falha
+    sai numa linha so, com a mensagem real."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        falso = os.path.join(self.dir, "ssh-copy-id")
+        with open(falso, "w") as f:
+            f.write(FALSO_ARGS)
+        os.chmod(falso, stat.S_IRWXU)
+        self.contador = os.path.join(self.dir, "args.txt")
+        self.chave = os.path.join(self.dir, "id.pub")
+        with open(self.chave, "w") as f:
+            f.write("ssh-rsa AAAA teste\n")
+        self.env = {
+            "PATH": self.dir + os.pathsep + os.environ.get("PATH", ""),
+            "CONTADOR": self.contador,
+        }
+
+    def tearDown(self):
+        for nome in os.listdir(self.dir):
+            os.remove(os.path.join(self.dir, nome))
+        os.rmdir(self.dir)
+
+    def _roda(self, extra):
+        with mock.patch.dict(os.environ, self.env), \
+             mock.patch.object(sb.ssh_utils, "SSH_OPTS_EXTRA", extra), \
+             mock.patch.object(sb, "gravar_log") as m_log:
+            ok = sb._ssh_copy_id_com_senha(
+                "192.0.2.1", "root", "x", self.chave, "", False)
+        with open(self.contador) as f:
+            args = f.read().split()
+        textos = [c[0][2] for c in m_log.call_args_list]
+        return ok, args, textos
+
+    def test_opcoes_extra_chegam_antes_do_destino(self):
+        ok, args, _ = self._roda(["-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+                                  "-o", "HostKeyAlgorithms=+ssh-rsa"])
+        self.assertFalse(ok)
+        self.assertIn("HostKeyAlgorithms=+ssh-rsa", args)
+        self.assertIn("PubkeyAcceptedAlgorithms=+ssh-rsa", args)
+        # o destino continua sendo o ultimo argumento
+        self.assertEqual(args[-1], "root@192.0.2.1")
+
+    def test_sem_extra_argv_de_antes(self):
+        """Regressao: cliente antigo (lista vazia) mantem o argv anterior."""
+        _, args, _ = self._roda([])
+        self.assertNotIn("HostKeyAlgorithms=+ssh-rsa", args)
+        self.assertEqual(args[-1], "root@192.0.2.1")
+
+    def test_falha_registrada_numa_linha_com_a_mensagem_real(self):
+        _, _, textos = self._roda([])
+        falha = [t for t in textos if "encerrou com rc=1" in t]
+        self.assertEqual(len(falha), 1, textos)
+        self.assertNotIn("\r", falha[0])
+        self.assertIn("no matching host key type found", falha[0])
+
+
 class _BaseHomeSsh(unittest.TestCase):
     """~/.ssh falso num diretorio temporario, com as constantes de chave
     do modulo apontando para ele."""
